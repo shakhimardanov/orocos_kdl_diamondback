@@ -23,6 +23,7 @@
 #define KDL_CHAIN_IDSOLVER_VERESHCHAGIN_HPP
 
 #include "chainidsolver.hpp"
+#include "articulatedbodyinertia.hpp"
 
 namespace KDL{
     /**
@@ -39,7 +40,7 @@ namespace KDL{
          * \param root_acc The acceleration vector of the root to use during the calculation.(most likely contains gravity)
          *
          */
-        ChainIdSolver_Constraint_Vereshchagin(const Chain& chain,Vector root_acc);
+        ChainIdSolver_Constraint_Vereshchagin(const Chain& chain,Vector root_acc,unsigned int nr_of_constraints, const Jacobian& alfa, const JntArray& beta);
         ~ChainIdSolver_Constraint_Vereshchagin(){};
         
         /**
@@ -54,58 +55,63 @@ namespace KDL{
          */
         int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Wrenches& f_ext,JntArray &torques);
         
-        //Function to calculate the determinant
-        double determ(double[6][6],double);
-        
-        //Functions to calculate velocity, propagated inertia, propagated bias forces, constraint forces and accelerations
-        void calc_one(int i, int j, const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Wrenches& f_ext);
-        void calc_two(int i, int k_n);
-        void constraint_calc(int k_n);
-        void calc_three(int i, int j, int k_n, JntArray &q_dotdot, JntArray &torques);
-
     private:
+        //Functions to calculate velocity, propagated inertia, propagated bias forces, constraint forces and accelerations
+        void initial_upwards_sweep(const JntArray &q, const JntArray &q_dot, const Wrenches& f_ext);
+        void downwards_sweep();
+        void constraint_calculation();
+        void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques);
+
         Chain chain;
         unsigned int nj;
         unsigned int ns;
-
+        unsigned int nc;
         Twist acc_root;
+
+        typedef Eigen::Matrix<double,6,1> Vector6d;
+        typedef Eigen::Matrix<double,6,6> Matrix6d;
+        typedef Eigen::Matrix<double,6,Eigen::Dynamic> Matrix6Xd;
         
         struct segment_info{
-            Frame X;//Pose
-            Twist S;//Unit twist
+            Frame F;//Pose
+            Frame F_matrix;//Transformation matrix
+            Twist Z;//Unit twist
             Twist v;//twist
-            Twist a;//acceleration twist
-            Twist c;//constraint
+            Twist acc;//acceleration twist
             Wrench f;//wrench
-            Wrench p_A_wrench;//dunno
-            Eigen::Matrix<6,1,double> p_A;//wrench p of the bias forces in matrix form
-            Eigen::Matrix<6,6,double> I_A;//I (expressed in 6*6 matrix) 
-            Eigen::Matrix<6,1,double> U;//vector U[i] = I_A[i]*S[i]
-            Eigen::Matrix<6,1,double> E;//vector E[i] = I_A[i]*c[i]
+            Wrench U;//wrench p of the bias forces in matrix form
+            Wrench R;//wrench p of the bias forces in matrix form
+            Wrench R_tilde;//vector of wrench p of the bias forces (new) in matrix form
+            Twist C;//constraint
+            ArticulatedBodyInertia H;//I (expressed in 6*6 matrix) 
+            ArticulatedBodyInertia P;//I (expressed in 6*6 matrix) 
+            ArticulatedBodyInertia P_tilde;//I (expressed in 6*6 matrix) 
+            Wrench PZ;//vector U[i] = I_A[i]*S[i]
+            Wrench PC;//vector E[i] = I_A[i]*c[i]
             double D;//vector D[i] = S[i]^T*U[i]
-            Eigen::Matrix<6,1,double> p_a;//vector of wrench p of the bias forces (new) in matrix form
-            Eigen::Matrix<6,6,double> I_a;//vector of RigidBodyInertia (new)
-            Eigen::Matrix<6,6,double> X_matrix;//Transformation matrix
-            Eigen::Matrix<6,6,double> X_matrix_inv;//Inverse Transformation matrix
-            Eigen::Matrix<6,6,double> G;//G[i] = I_a*X_matrix_inv[i]
-            Eigen::Matrix<6,1,double> F;//F[i]
-            Eigen::Matrix<6,6,double> E_constr_A;//matrix with virtual unit constraint force due to acceleration constraints
-            Eigen::Matrix<6,6,double> E_constr_a;
-            Eigen::Matrix<6,6,double> M_constr;//acceleration energy already generated at link i
-            Eigen::Matrix<6,1,double> G_constr;//magnitude of the constraint forces already generated at link i
-            Eigen::Matrix<1,6,double> U_E;//U_E[i] = S[i]^T*E_constr_A[i];
-            Eigen::Matrix<6,1,double> K;//K[i] = E_constr_A[i]^T*S[i]
-            Eigen::Matrix<6,1,double> acc;
+            Matrix6Xd E;//matrix with virtual unit constraint force due to acceleration constraints
+            Matrix6Xd E_tilde;
+            Eigen::MatrixXd M;//acceleration energy already generated at link i
+            Eigen::VectorXd G;//magnitude of the constraint forces already generated at link i
+            Matrix6d UDS;//UDS =I_A*S*D_inv*S[i]^T;
+            Vector6d K;//K[i] = E_constr_A[i]^T*S[i]
             double u;//vector u[i] = torques(i) - S[i]^T*(p_A[i] + I_A[i]*C[i])
-            
+            segment_info(unsigned int nc){
+                E.resize(6,nc);
+                E_tilde.resize(6,nc);
+                G.resize(nc,nc);
+                M.resize(nc,nc);
+            };
         };
-        double alfa_N[6][6];
-        double v_constr[6][1];//v = M_0^-1*(beta_N - E_constr_a^T*a[0] - G_constr[0])
-        double M_0_inverse[6][6];
-        double beta_N[6][1];
-        double v_constr_sum[6][1];
-        double c_sum_a[6][1];
-        double qdotdot_sum[6][1];
+
+        std::vector<segment_info> results;
+        
+        Jacobian alfa_N;
+        Eigen::VectorXd v_constr;//v = M_0^-1*(beta_N - E_constr_a^T*a[0] - G_constr[0])
+        Eigen::MatrixXd M_0_inverse;
+        JntArray beta_N;
+        Eigen::VectorXd nu,nu_sum;
+        Wrench qdotdot_sum;
     };
 }
 

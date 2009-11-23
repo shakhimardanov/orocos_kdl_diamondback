@@ -1,4 +1,4 @@
-// Copyright  (C)  2009
+b// Copyright  (C)  2009
 
 // Version: 1.0
 // Author: 
@@ -21,14 +21,20 @@
 
 #include "chainidsolver_constraint_vereshchagin.hpp"
 #include "frames_io.hpp"
+#include <Eigen/SVD>
 
 namespace KDL{
-    
-    ChainIdSolver_Constraint_Vereshchagin::ChainIdSolver_Constraint_Vereshchagin(const Chain& chain_,Vector root_acc):
-        chain(chain_),nj(chain.getNrOfJoints()),ns(chain.getNrOfSegments()),
-        X(ns),S(ns),v(ns),a(ns),f(ns)
+    using namespace Eigen;
+
+    ChainIdSolver_Constraint_Vereshchagin::ChainIdSolver_Constraint_Vereshchagin(const Chain& chain_,Vector root_acc, unsigned int nr_of_constraints,const Jacobian& alfa,const JntArray& beta):
+        chain(chain_),nj(chain.getNrOfJoints()),ns(chain.getNrOfSegments()),nc(nr_of_constraints),
+        results(ns,segment_info(nc)),alfa_N(alfa),beta_N(beta)
     {
         acc_root=-Twist(root_acc,Vector::Zero());
+        M_0_inverse.resize(nc,nc);
+        assert(alfa_N.columns()!=nc);
+        assert(beta_N.rows()!=nc);
+       
     }
 
 
@@ -37,611 +43,168 @@ namespace KDL{
         //Check sizes when in debug mode
         if(q.rows()!=nj || q_dot.rows()!=nj || q_dotdot.rows()!=nj || torques.rows()!=nj || f_ext.size()!=ns)
             return -1;
+                
+        this->initial_upwards_sweep(q, q_dot, f_ext);
+        this->downwards_sweep();
+		this->constraint_calculation();
+        this->final_upwards_sweep(q_dotdot, torques);
+    }
+
+    void ChainIdSolver_Constraint_Vereshchagin::initial_upwards_sweep(const JntArray &q, const JntArray &qdot, const Wrenches& f_ext)
+	{
         unsigned int j=0;
-        
-        
-        
-		//    EXAMPLE
-
-		int k_n = 5;//example
-
-		//Example: only vertical acceleration !!!!
-		//Declaration of alfa_N
-		for(int l=0;l<k_n;l++)
-		{
-			for(int k=0;k<k_n;k++)
-			{
-				alfa_N[l][k] = 0;
-			}
-		}
-		alfa_N[0][0] = 1;
-		alfa_N[1][1] = 1;
-		alfa_N[3][2] = 1;
-		alfa_N[4][3] = 1;
-		alfa_N[5][4] = 1;
-
-		//Declaration of beta_N, depends on k_n
-		for(int l=0;l<k_n;l++)
-		{
-	    	beta_N[l][0] = 0;
-		}
-		
-		
-		
-		
-		//Sweep from root to leaf
-        for(unsigned int i=0;i<ns;i++)
-        {
-			ChainIdSolver_Constraint_Vereshchagin::calc_one(i, j, q, q_dot, q_dotdot, f_ext);
-        }
-	
-
-        for(int i=ns-1;i>=0;i--)
-        {
-        	ChainIdSolver_Constraint_Vereshchagin::calc_two(i, k_n);
-        }
-
-		ChainIdSolver_Constraint_Vereshchagin::constraint_calc(k_n);
-
-		for(int i=0;i<ns;i++)
-		{
-	    	ChainIdSolver_Constraint_Vereshchagin::calc_three(i, j, k_n, q_dotdot, torques);
-		}
-
-    }
-
-    //Function for matrix inverse calculation, Determinant
-
-    double ChainIdSolver_Constraint_Vereshchagin::determ(double num[6][6],double k)
-    {
-		double s=1;
-		double det=0;
-		double b[6][6];
-
-		if(k==1)
-		{
-	    	return(num[0][0]);
-		}
-		else
-    	{
-            det=0;
-            for(int p=0;p<k;p++)
-            {
-                int m=0;
-            	int n=0;
-            	for(int l=0;l<k;l++)
-            	{
-                    for(int r=0;r<k;r++)
-                    {
-                    	b[l][r]=0;
-                    	if(l!=0&&r!=p)
-                    	{
-                            b[m][n]=num[l][r];
-                            if(n<(k-2))
-						    {
-                            	n++;
-			    			}
-                            else
-                            {
-                            	n=0;
-                            	m++;
-                            }
-                    	}
-                    }
-            	}
-            	det=det+s*(num[0][p]*ChainIdSolver_Constraint_Vereshchagin::determ(b,k-1));
-            	s=-1*s;
-            }
-    	}
-    	return det;
-    }
-    
-    void ChainIdSolver_Constraint_Vereshchagin::calc_one(int i, int j, const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Wrenches& f_ext)
-	{
-		double q_,qdot_,qdotdot_;
-    	if(chain.getSegment(i).getJoint().getType()!=Joint::None)
-    	{
-        	q_=q(j);
-        	qdot_=q_dot(j);
-        	j++;
-    	}
-    	else
-        	q_=qdot_=0.0;
+        for(unsigned int i=0;i<ns;++i){
+            //Calculate segment properties: X,S,vj,cj
+            const Segment& segment=chain.getSegment(i);
+            segment_info& s=results[i];
+            s.F=segment.pose(q(j));
+            //frame for transformations from 
+            //the parent to the current coord frame
+            //Transform velocity and unit velocity to segment frame
+            Twist vj=s.F.M.Inverse(segment.twist(q(j),qdot(j)));
+            s.Z=s.F.M.Inverse(segment.twist(q(j),1.0));
+            //We can take cj=0, see remark section 3.5, page 55 since the unit velocity vector S of our joints is always time constant
             
-    	//Calculate segment properties: X,S,vj,cj
-    	X[i]=chain.getSegment(i).pose(q_);//Remark this is the inverse of the 
-                                        //frame for transformations from 
-                                        //the parent to the current coord frame
-    	//Transform velocity and unit velocity to segment frame
-    	Twist vj=X[i].M.Inverse(chain.getSegment(i).twist(q_,qdot_));
-    	S[i]=X[i].M.Inverse(chain.getSegment(i).twist(q_,1.0));
-    	//We can take cj=0, see remark section 3.5, page 55 since the unit velocity vector S of our joints is always time constant
+          
+            //calculate velocity of the segment (in segment coordinates)	    
+            if(i!=0)
+                s.v=s.F.Inverse(results[i-1].v)+vj;
+            else
+                s.v=vj;
+            
+            //c[i] = cj + v[i]xvj (remark: cj=0, since our S is not time dependent in local coordinates)
+            s.C = s.v*vj;//This is a cross product
+        
+            s.H=segment.getInertia();
+        
+            //wrench p of the bias forces
+            //external forces on the segments (in body coordinates)
+            s.U = s.v*(s.H*s.v) - f_ext[i];
 
- 		//Transformation matrix X_matrix[i] and X_matrix_inv[i] (X_matrix[i]*I[i]*X_matrix_inv[i])
-   		for(int l=0;l<3;l++)
-   		{
-			for(int k=0;k<3;k++)
-			{
-    			X_matrix[l][k][i] = X[i].M(l,k);
-   				X_matrix_inv[l][k][i] = X[i].M(k,l);
-			}
-			for(int k=3;k<6;k++)
-			{
-    			X_matrix[l][k][i] = 0;
-			}
-			X_matrix_inv[0][l+3][i] = -X[i].p(2)*X[i].M(l,1) + X[i].p(1)*X[i].M(l,2);
-			X_matrix_inv[1][l+3][i] = X[i].p(2)*X[i].M(l,0) - X[i].p(0)*X[i].M(l,2);
-			X_matrix_inv[2][l+3][i] = -X[i].p(1)*X[i].M(l,0) + X[i].p(0)*X[i].M(l,1);
-   		}
-   		for(int l=3;l<6;l++)
-   		{
-			for(int k=0;k<3;k++)
-			{
-    			X_matrix_inv[l][k][i] = 0;
-			}
-			for(int k=3;k<6;k++)
-			{
-    			X_matrix[l][k][i] = X[i].M(l-3,k-3);
-    			X_matrix_inv[l][k][i] = X[i].M(k-3,l-3);
-			}
-			X_matrix[l][0][i] = -X[i].M(l-3,1)*X[i].p(2) + X[i].M(l-3,2)*X[i].p(1);
-       		X_matrix[l][1][i] = X[i].M(l-3,0)*X[i].p(2) - X[i].M(l-3,2)*X[i].p(0);
-       		X_matrix[l][2][i] = -X[i].M(l-3,0)*X[i].p(1) + X[i].M(l-3,1)*X[i].p(0);
-   		}
-
-    	//calculate velocity of the segment (in segment coordinates)	    
-    	if(i==0){
-        	v[i]=vj;
-    	}else{
-        	v[i]=X[i].Inverse(v[i-1])+vj;
-    	}
-
-    	//c[i] = cj + v[i]xvj (remark: cj=0)
-   		c[i] = v[i]*vj;//This is a cross product
-	    
-    	//Calculate the force for the joint
-    	//Collect RigidBodyInertia and external forces
-    	RigidBodyInertia Ii=chain.getSegment(i).getInertia();
-	    
-   		//Make Inertia matrix out of RigidBodyInertia
-   		//Optimalisation possible !! Inertia matrix is a symmetric matrix
-   		for(int l=0;l<3;l++)
-   		{
-			for(int m=0;m<3;m++)
-			{
-    			if(l==m)
-    			{
-					I_A[l][m][i] = Ii.m;
-    			}
-    			else
-    			{
-					I_A[l][m][i] = 0;
-				}
-			}
-   		}
-   		int r=0;
-   		for(int l=3;l<6;l++)
-   		{
-			for(int m=3;m<6;m++)
-			{
-    			I_A[l][m][i] = Ii.I.data[r];
-    			r++;
-			}
-   		}
-   		I_A[0][3][i] = I_A[3][0][i] = 0;
-   		I_A[0][4][i] = I_A[4][0][i] = Ii.m*Ii.h(3);
-   		I_A[0][5][i] = I_A[5][0][i] = -Ii.m*Ii.h(2);
-   		I_A[1][3][i] = I_A[3][1][i] = -Ii.m*Ii.h(3);
-   		I_A[1][4][i] = I_A[4][1][i] = 0;
-	   	I_A[1][5][i] = I_A[5][1][i] = Ii.m*Ii.h(1);
-	   	I_A[2][3][i] = I_A[3][2][i] = Ii.m*Ii.h(2);
-	   	I_A[2][4][i] = I_A[4][2][i] = -Ii.m*Ii.h(1);
-	   	I_A[2][5][i] = I_A[5][2][i] = 0;
-	
-	   	//wrench p of the bias forces
-	   	//external forces on the segments (in body coordinates)
-	   	p_A_wrench[i] = v[i]*(Ii*v[i]) - f_ext[i];
-	   
-	   	//Change p_A_wrench[i] to matrix form
-	   	for(int l=0;l<6;l++)
-	   	{
-			p_A[l][0][i] = p_A_wrench[i](l);
-	   	}
-	}
-	
-	void ChainIdSolver_Constraint_Vereshchagin::calc_two(int i, int k_n)
-	{
-	    //U[i] = I_A[i]*S[i];
-    	for(int l=0;l<6;l++)
-    	{
-			U[l][0][i] = 0;
-			for(int k=0;k<6;k++)
-			{
-	    		U[l][0][i] += I_A[l][k][i]*S[i](k);
-			}
-    	}
-
-    	//D[i] = S[i]^T*U[i]    
-    	D[i] = 0;//We can add the inertia of the motor here.
-  	 	for(int k=0;k<6;k++)
-  	 	{
-			D[i] += S[i](k)*U[k][0][i];
-    	}
-
-    	//E[i] = I_A*c[i]
-    	for(int l=0;l<6;l++)
-    	{
-        	E[l][0][i] = 0;
-        	for(int m=0;m<6;m++)
-        	{
-    	    	E[l][0][i] += I_A[l][m][i]*c[i](m);
-        	}
-    	}
-
-    	//u[i] = torques(i) - S[i]^T*(p_A[i] + I_A[i]*C[i])
-    	u[i] = 0;//For inverse dynamics, torques = 0
-    	for(int k=0;k<6;k++)
-    	{
-			u[i] -= S[i](k)*(p_A[k][0][i] + E[k][0][i]);
-    	}
-   
-    	if(i != 0)
-    	{
-			//I_a = I_A[i] - U[i]*D[i]^-1*U[i]^T
-			//I_a is a usable variable, it isn`t needed out of for loop(i)
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=l;k<6;k++)
-	    		{
-					I_a[l][k] = I_A[l][k][i] - (U[l][0][i]*U[k][0][i])/D[i];
-	    		}
-			}
-			//declaration of symmetry
-			//optimalisation possible !!
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=0;k<6;k++)
-	    		{
-					I_a[k][l] = I_a[l][k];
-	    		}
-			}
-
-			//p_a = p_A[i] + I_A*c[i] + U[i]*D[i]^-1*u[i]
-			//p_a is a usable variable, it isn`t needed out of for loop(i)
-
-			//p_a = p_A[i] + E[i] + U[i]*D[i]^-1*u[i]
-			for(int l=0;l<6;l++)
-			{
-	    		p_a[l][0] = p_A[l][0][i] + E[l][0][i] + U[l][0][i]*(u[i]/D[i]);
-			}
-
-			//I_A[i-1] = I_A[i-1] + X[i]*I_a*X[i].inverse()
-			//Transformation matrix X_matrix[i] and X_matrix_inv[i]
-
-			//G[i] = I_a*X_matrix_inv[i]
-			//Optimalisation possible !!
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=0;k<6;k++)
-	    		{
-					G[l][k][i] = 0;
-					for(int m=0;m<6;m++)//sum
-					{
-		    			G[l][k][i] += I_a[l][m]*X_matrix_inv[m][k][i];
-					}
-	    		}
-			}
-
-			//I_A[i-1] = I_A[i-1] + X[i]*G[i]
-			//Optimalisation possible !!
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=0;k<6;k++)
-	    		{
-					for(int m=0;m<6;m++)//sum
-					{
-		    			I_A[l][k][i-1] += X_matrix[l][m][i]*G[m][k][i];
-					}
-	    		}
-			}
-		
-			//p_A[i-1] = p_A[i-1] + X[i]*p_a
-			for(int l=0;l<6;l++)
-			{
-				for(int m=0;m<6;m++)//sum
-				{
-		    		p_A[l][0][i-1] += X_matrix[l][m][i]*p_a[m][0];
-				}
-			}
-
-
-			//             CONSTRAINTS
-
-
-			//E_constr_A[ns-1] = X[ns-1]*alfa_N
-			if(i=ns-1)
-			{
-	    		for(int l=0;l<6;l++)
-	    		{
-					for(int m=0;m<k_n;m++)
-					{
-		    			E_constr_A[l][m][i] = 0;
-		    			for(int k=0;k<6;k++)//sum
-		    			{
-							E_constr_A[l][m][i] += X_matrix[l][k][i]*alfa_N[k][m];
-		    			}
-					}
-	    		}
-			}
-
-			//U_E[i] = S[i]^T*E_constr_A[i];
-			for(int l=0;l<k_n;l++)
-			{
-	    		U_E[0][l][i] = 0;
-	    		for(int k=0;k<6;k++)
-	    		{
-					U_E[0][l][i] += S[i](k)*E_constr_A[k][l][i];
-	    		}
-			}
-
-
-			//E_constr_a[i] = E_constr_A[i] - U[i]*D[i]^-1*U_E[i]
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=0;k<k_n;k++)
-	    		{
-					E_constr_a[l][k][i] = E_constr_A[l][k][i] - (U[l][0][i]*U_E[0][k][i])/D[i];
-	    		}
-			}
-
-			//E_constr_A[i-1] = X[i]*E_constr_a[i];
-			for(int l=0;l<6;l++)
-			{
-	    		for(int k=0;k<k_n;k++)
-	    		{
-					E_constr_A[l][k][i-1] = 0;
-					for(int m=0;m<6;m++)//sum
-					{
-		    			E_constr_A[l][k][i-1] += X_matrix[l][m][i]*E_constr_a[m][k][i];
-					}
-	    		}
-			}
-
-			//M_constr[i-1] = M_constr[i] - E_constr_A[i]^T*S[i]*D[i]^-1*S[i]^T*E_constr_A[i]
-		
-			//K[i] = E_constr_A[i]^T*S[i]
-			for(int l=0;l<k_n;l++)
-			{
-	    		K[l][0][i] = 0;
-	    		for(int k=0;k<6;k++)
-	    		{
-					K[l][0][i] += E_constr_A[l][k][i]*S[i](k);
-	    		}
-			}
-		
-			//M_constr[i-1] = M_constr[i] - K[i]*D[i]^-1*K[i]^T
-			for(int l=0;l<k_n;l++)
-			{
-	    		for(int k=0;k<k_n;k++)
-	    		{
-					if(i=ns-1)
-					{
-		    			M_constr[l][k][i] = 0;
-					}
-					M_constr[l][k][i-1] = M_constr[l][k][i] - (K[l][0][i]*K[0][k][i])/D[i];
-	    		}
-			}
-
-			//G_constr[i-1] = G_constr[i] + E_constr[i]^T*c[i] + E_constr[i]^T*S[i]*u[i]/D[i]
-			for(int l=0;l<k_n;l++)
-			{
-	    		if(i=ns-1)
-	    		{
-					G_constr[l][0][i] = 0;
-	    		}
-	    		G_constr[l][0][i-1] = G_constr[l][0][i];
-	    		for(int k=0;k<6;k++)
-	    		{
-					G_constr[l][0][i-1] += E_constr_A[k][l][i]*c[i](k);
-	    		}
-	    		G_constr[l][0][i-1] += K[l][0][i]*(u[i]/D[i]);
-			}
-    	}
+            if(segment.getJoint().getType()!=Joint::None)
+                {
+                    j++;
+                }
+        }
     }
-    
-	void ChainIdSolver_Constraint_Vereshchagin::constraint_calc(int k_n)
-	{
-		//v_constr = M_0_inverse*(beta_N - E_constr_a^T*a[0] - G_constr[0])
 
-		//M_0_inverse, always k_n*k_n matrix
+	void ChainIdSolver_Constraint_Vereshchagin::downwards_sweep()
+	{
+        for(int i=ns-1;i>0;i--)
+            {
+                //Get a handle for the segment we are working on.
+                segment_info& s=results[i];
+                //For segment N,
+                if(i=ns-1){
+                    s.P_tilde=s.H;
+                    s.R_tilde=s.U;
+                    s.M.setZero();
+                    s.G.setZero(); 
+                    for(unsigned int r=0;r<6;r++)
+                        for(unsigned int c=0;c<nc;c++)
+                            s.E_tilde(r,c)=alfa_N(r,c);
+                }else{
+                    //a)Pi_tilde=Hi+P(i+1) -P(i+1)*Zi/D(i+1)*Zi'*P(i+1)'
+                    segment_info& parent=results[i+1];
+                    Vector6d vPZ;
+                    vPZ<<Vector3d::Map(parent.PZ.force.data),Vector3d::Map(parent.PZ.torque.data);
+                    Matrix6d PZDZtPt;
+                    PZDZtPt.part<SelfAdjoint>()= (vPZ*vPZ.transpose()).lazy()/parent.D;
+                    s.P_tilde = ((s.H + parent.P) - ArticulatedBodyInertia(PZDZtPt.corner<3,3>(TopLeft),PZDZtPt.corner<3,3>(TopRight),PZDZtPt.corner<3,3>(BottomRight)));
+                    
+                    //b) Ri_tilde = Ui+R(i+1)+P(i+1)*C(i+1)(Q(i+1)-Zi'((Ri+1)+P(i+1)*C(i+1))
+                    double torque = -dot(parent.Z,parent.R+parent.PC);//torque=Q(i+1)-Zi'(R(i+1)+P(i+1)*C(i+1)), Qi=external joint torque, 0 in our case.
+                    s.R_tilde = ((s.U+parent.R)+parent.PC)+parent.PZ/parent.D*torque;
+                    
+                    //c) Ei_tilde = E(i+1) - P(i+1)*Zi/D(i+1)*Zi'*E(i+1)
+                    Vector6d Zi;
+                    Zi<<Vector3d::Map(parent.Z.rot.data),Vector3d::Map(parent.Z.vel.data);
+                    Matrix6d tmp = -(vPZ*Zi.transpose()).lazy();
+                    tmp/=parent.D;
+                    s.E_tilde=(tmp*parent.E).lazy();
+                    s.E_tilde+=parent.E;
+                    
+                    //d) Mi = M(i+1) - E(i+1)'*Zi/D(i+1)*Zi'*E(i+1)
+                    //Ki = E(i+1)'*Zi
+                    Vector6d Ki = (parent.E.transpose()*Zi).lazy();
+                    s.M.part<SelfAdjoint>()=-(Ki*Ki.transpose()).lazy();
+                    s.M/=parent.D;
+                    s.M+=parent.M;
+
+                    //e) Gi = G(i+1) + E(i+1)'(C(i+1) + Zi/D(i+1)*(Q(i+1)-Zi'(R(i+1)+P(i+1)*C(i+1))
+                    Twist CiminZetc = parent.C+parent.Z/parent.D*torque;
+                    Vector6d Ci;
+                    Ci<<Vector3d::Map(CiminZetc.rot.data),Vector3d::Map(CiminZetc.vel.data);
+                    s.G=(parent.E.transpose()*Ci).lazy();
+                    s.G+=parent.G;
+                }
+                //a) Pi=F'*Pi_tilde*F
+                s.P=s.F*s.P_tilde;//This is a full transform F*P*F'
+                s.PC = s.P*s.C;
+                s.PZ = s.P*s.Z;
+                //a)Di=di+Z(i-1)'*Pi*Z(i-1)
+                s.D = dot(s.Z,s.PZ);//We can add the inertia of the motor, di here.
+
+                //b) Ri = F'Ri_tilde
+                s.R=s.F*s.R_tilde;
+                //c) Ei = F'Ei_tilde
+                //Every column of E is a Wrench, so use Wrench representation for transformation
+                for(unsigned int c=0;c<nc;c++){
+                    Wrench col(Vector(s.E_tilde(0,c),s.E_tilde(1,c),s.E_tilde(2,c)),
+                               Vector(s.E_tilde(3,c),s.E_tilde(4,c),s.E_tilde(5,c)));
+                    col=s.F*col;
+                    s.E.col(c)<<Vector3d::Map(col.force.data),Vector3d::Map(col.torque.data);
+                }                                
+                
+            }
+    }
+
+    
+	void ChainIdSolver_Constraint_Vereshchagin::constraint_calculation()
+	{
+		//f) nu = M_0_inverse*(beta_N - E0_tilde`*acc0 - G0)
+
+		//M_0_inverse, always nc*nc matrix
 		//Optimalisation possible !!
+        results[0].M.computeInverse(&M_0_inverse);
+        Vector6d acc;
+        acc<<Vector3d::Map(acc_root.rot.data),Vector3d::Map(acc_root.vel.data);
+        nu_sum=-(results[0].E_tilde.transpose()*acc).lazy();
+        nu_sum+=beta_N.data;
+        nu_sum -= results[0].G;
+        nu = (M_0_inverse * nu_sum).lazy();
+    }    
 
-  		double a_constr[6][6];
-		double d;
 
-		for(int l=0;l<k_n;l++)
-		{
-	    	for(int m=0;m<k_n;m++)
-	    	{
-				a_constr[l][m] = M_constr[l][m][0];
-	    	}
-		}
+	void ChainIdSolver_Constraint_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques){
+        {
+            unsigned int j=0;
+            
+            for(unsigned int i=0;i<ns;i++){
+                segment_info& s=results[i];
+                //Calculation of joint and segment accelerations
+                //g) qdotdot[i] = D[i]-1(Q[i] - Z[i]^T(R[i] + P[i](C[i] + acc[i-1]) + E[i]*nu))
+                Twist CAcc;
+                if(i=0)
+                    CAcc=s.C+acc_root;
+                else
+                    CAcc=s.C+results[i-1].acc;
+                
+                Vector6d c_f = s.E*v_constr;
+                Wrench constraint_force(Vector(c_f(0),c_f(1),c_f(2)),Vector(c_f(3),c_f(4),c_f(5)));
+                Wrench total_force=(s.R+s.P*CAcc)+constraint_force;
+                
+                q_dotdot(j) = -dot(s.Z,total_force)/s.D;//Q[i] = 0
 
-        d = ChainIdSolver_Constraint_Vereshchagin::determ(a_constr,k_n);
-   		if(d<=1/100000000)
-		{
-	    	//error !! Not inversible
-		}
-  		else
-		{
-	    	double b[6][6];
-	    	double fac[6][6];
-	    	double pow;
-    	    double b_fac[6][6];
-
-		    if(k_n == 1)
-		    {
-				M_0_inverse[0][0] = 1/a_constr[0][0];
-		    }
-		    else
-		    {
-    	        for(int q=0;q<k_n;q++)
-    	        {
-        	    	for(int p=0;p<k_n;p++)
-        	    	{
-            	        int m=0;
-                        int n=0;
-            	        for(int l=0;l<k_n;l++)
-            	        {
-                	    	for(int r=0;r<k_n;r++)
-                	    	{
-                    	        b[l][r]=0;
-                                if(l!=q&&r!=p)
-                    	        {
-                        	    	b[m][n]=a_constr[l][r];
-                        	    	if(n<(k_n-2))
-                            	        n++;
-                        	    	else
-                        	    	{
-                            	        n=0;
-                            	        m++;
-                        	    	}
-                    	    	}
-                	    	}
-            	        }
-				        pow = 1;
-				        for(int l=0;l<q+p;l++)
-				        {
-						    pow = pow*-1;
-			        	}
-	            	        fac[q][p]=pow*ChainIdSolver_Constraint_Vereshchagin::determ(b,k_n-1);
-	        	    }
-	    	    }
-	
-	    	    for(int l=0;l<k_n;l++)
-	    	    {
-	        	    for(int r=0;r<k_n;r++)
-	        	    {
-	            	        b_fac[l][r]=fac[r][l];
-	        	    }
-	    	    }
-	
-		        for(int l=0;l<k_n;l++)
-		        {
-			    	for(int r=0;r<k_n;r++)
-			    	{
-			        	M_0_inverse[l][r] = b_fac[l][r]/d;
-			    	}
-		        }
-		    }
-		}
-
-		
-		//v_constr_sum = beta_N - E_constr_a^T*acc[0] - G_constr[0]
-		for(int l=0;l<k_n;l++)
-		{
-	    	v_constr_sum[l][0] = beta_N[l][0] - G_constr[l][0][0];
-	    	for(int k;k<6;k++)
-	    	{
-				v_constr_sum[l][0] -= E_constr_a[k][l][0]*acc_root(k);
-	    	}
-		}
-
-		//v_constr = M_0_inverse*v_constr_sum
-		for(int l=0;l<k_n;l++)
-		{
-	    	v_constr[l][0] = 0;
-	    	for(int k=0;k<k_n;k++)
-	    	{
-				v_constr[l][0] += M_0_inverse[l][k]*v_constr_sum[k][0];
-	    	}
-		}	
-	}    
-
-	void ChainIdSolver_Constraint_Vereshchagin::calc_three(int i, int j, int k_n, JntArray &q_dotdot, JntArray &torques)
-	{
-		//Calculation of joint and segment accelerations
-    	//qdotdot[i] = D[i]-1(Q[i] - S[i]^T(p_A[i] + I_A[i](c[i] + a[i-1]) + E_constr_A[i]*v_constr))
-    	//c_sum_a = c[i] + a[i-1]
-    	if(i=0)
-    	{
-			for(int l=0;l<6;l++)
-			{
-	    		c_sum_a[l][0] = c[i](l) + acc_root(l);
-			}
-    	}
-    	else
-    	{
-			for(int l=0;l<6;l++)
-			{
-	    		c_sum_a[l][0] = c[i](l) + acc[l][0][i-1];
-			}
-    	}
-    	//qdotdot_sum = p_A[i] + I_A[i](c_sum_a) + E_constr_A[i]*v_constr
-    	for(int l=0;l<6;l++)
-    	{
-			qdotdot_sum[l][0] = p_A[l][0][i];
-			for(int m=0;m<6;m++)
-			{
-	    		qdotdot_sum[l][0] += I_A[l][m][i]*c_sum_a[m][0];
-			}
-			for(int k=0;k<k_n;k++)
-			{
-	    		qdotdot_sum[l][0] += E_constr_A[l][k][i]*v_constr[k][0];
-			}
-    	}
-    	//qdotdot[i] = (Q[i] - S[i]^T*qdotdot_sum)/D[i]
-    	q_dotdot(i) = 0/D[i];//Q[i] = 0
-    	for(int l=0;l<6;l++)
-    	{
-			q_dotdot(i) -= (S[i](l)*qdotdot_sum[l][0])/D[i];
-    	}
-    
-    	//acc[i] = X_matrix_inv[i]*acc[i-1] + S[i]*qdotdot[i] + c[i]
-    	if(i=0)
-    	{
-			for(int l=0;l<6;l++)
-			{
-	    		acc[l][0][i] = S[i](l)*q_dotdot(i) + c[i](l);
-	    		for(int m=0;m<6;m++)
-	    		{
-					acc[l][0][i] += X_matrix_inv[l][m][i]*acc_root(m);
-	    		}
-			}
-    	}
-    	else
-    	{
-			for(int l=0;l<6;l++)
-			{
-	    		acc[l][0][i] = S[i](l)*q_dotdot(i) + c[i](l);
-	    		for(int m=0;m<6;m++)
-	    		{
-					acc[l][0][i] += X_matrix_inv[l][m][i]*acc[m][0][i-1];
-	    		}
-			}
-    	}
-	
-    	//Torques needed for constraint
-    	//Forces in the joints
-    	for(int k=0;k<6;k++)
-    	{
-			F[k][0][i] = 0;
-			for(int m=0;m<k_n;m++)
-			{
-	    		F[k][0][i] += E_constr_A[k][m][i]*v_constr[m][0];
-			}
-    	}
-
-    	//Torques
-    	if(chain.getSegment(i).getJoint().getType()!=Joint::None)
-    	{
-        	torques(j) = 0;
-        	for(int k=0;k<6;k++)
-        	{
-            	torques(j) += S[i](k)*F[k][0][i];
-				j--;
-        	}
-    	}	
-	}
-
+                //h) acc[i] = Fi*(acc[i-1] + Z[i]*qdotdot[i] + c[i]
+                if(i!=0)
+                    s.acc=s.F*(results[i-1].acc+s.Z*q_dotdot(j)+s.C);
+                
+                if(chain.getSegment(i).getJoint().getType()!=Joint::None)
+                    {
+                        j++;
+                    }
+            }
+        }
+    }
 }//namespace
