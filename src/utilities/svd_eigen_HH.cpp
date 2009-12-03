@@ -29,7 +29,7 @@ namespace KDL{
         const int rows = A.rows();
         const int cols = A.cols();
     
-        U.setZero();
+        U.setIdentity();
         U.corner(Eigen::TopLeft,rows,cols)=A;
 
         int i(-1),its(-1),j(-1),jj(-1),k(-1),nm=0;
@@ -44,7 +44,9 @@ namespace KDL{
             g=s=scale=0.0; 
             if (i<rows) {
                 // compute the sum of the i-th column, starting from the i-th row
-                for (k=i;k<rows;k++) scale += fabs(U(k,i));
+                for (k=i;k<rows;k++){
+                    scale += fabs(U(k,i));
+                }
                 if (fabs(scale)>epsilon) {
                     // multiply the i-th column by 1.0/scale, start from the i-th element
                     // sum of squares of column i, start from the i-th element
@@ -201,7 +203,7 @@ namespace KDL{
                     g=c*g;
                     z=PYTHAG(f,h);
                     tmp(j)=z;
-                    assert(z!=0);
+                    //assert(z!=0);
                     c=f/z;
                     s=h/z;
                     f=x*c+g*s;
@@ -216,7 +218,7 @@ namespace KDL{
                     }
                     z=PYTHAG(f,h);
                     S(j)=z;
-                    assert(z!=0);
+                    //assert(z!=0);
                     if (fabs(z)>epsilon) {
                         z=1.0/z;
                         c=f*z;
