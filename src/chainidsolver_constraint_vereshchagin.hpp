@@ -23,16 +23,16 @@
 #define KDL_CHAIN_IDSOLVER_VERESHCHAGIN_HPP
 
 #include "chainidsolver.hpp"
+#include "frames.hpp"
 #include "articulatedbodyinertia.hpp"
 
 namespace KDL{
     /**
      * \brief Dynamics calculations by constraints based on Vereshchagin 1989.
-     * Code also based on Roy Featherstone, Rigid body dynamics Algorithms page 132 and 127.
      * 
      * For a chain
      */
-    class ChainIdSolver_Constraint_Vereshchagin : public ChainIdSolver{
+    class ChainIdSolver_Constraint_Vereshchagin{
     public:
         /**
          * Constructor for the solver, it will allocate all the necessary memory
@@ -40,7 +40,7 @@ namespace KDL{
          * \param root_acc The acceleration vector of the root to use during the calculation.(most likely contains gravity)
          *
          */
-        ChainIdSolver_Constraint_Vereshchagin(const Chain& chain,Vector root_acc,unsigned int nr_of_constraints, const Jacobian& alfa, const JntArray& beta);
+        ChainIdSolver_Constraint_Vereshchagin(const Chain& chain,Twist root_acc,unsigned int nc);
         ~ChainIdSolver_Constraint_Vereshchagin(){};
         
         /**
@@ -53,13 +53,13 @@ namespace KDL{
          * \param q_dotdot The joint accelerations
          * \param torques the resulting torques for the joints
          */
-        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Wrenches& f_ext,JntArray &torques);
+        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext,JntArray &torques);
         
     private:
         //Functions to calculate velocity, propagated inertia, propagated bias forces, constraint forces and accelerations
         void initial_upwards_sweep(const JntArray &q, const JntArray &q_dot, const Wrenches& f_ext);
-        void downwards_sweep();
-        void constraint_calculation();
+        void downwards_sweep(const Jacobian& alfa,const JntArray& torques);
+        void constraint_calculation(const JntArray& beta);
         void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques);
 
         Chain chain;
@@ -74,13 +74,11 @@ namespace KDL{
         
         struct segment_info{
             Frame F;//Pose
-            Frame F_matrix;//Transformation matrix
             Twist Z;//Unit twist
             Twist v;//twist
             Twist acc;//acceleration twist
-            Wrench f;//wrench
-            Wrench U;//wrench p of the bias forces in matrix form
-            Wrench R;//wrench p of the bias forces in matrix form
+            Wrench U;//wrench p of the bias forces 
+            Wrench R;//wrench p of the bias forces 
             Wrench R_tilde;//vector of wrench p of the bias forces (new) in matrix form
             Twist C;//constraint
             ArticulatedBodyInertia H;//I (expressed in 6*6 matrix) 
@@ -93,25 +91,31 @@ namespace KDL{
             Matrix6Xd E_tilde;
             Eigen::MatrixXd M;//acceleration energy already generated at link i
             Eigen::VectorXd G;//magnitude of the constraint forces already generated at link i
-            Matrix6d UDS;//UDS =I_A*S*D_inv*S[i]^T;
-            Vector6d K;//K[i] = E_constr_A[i]^T*S[i]
+            Eigen::VectorXd EZ;//K[i] = Etiltde'*Z
             double u;//vector u[i] = torques(i) - S[i]^T*(p_A[i] + I_A[i]*C[i])
             segment_info(unsigned int nc){
                 E.resize(6,nc);
                 E_tilde.resize(6,nc);
-                G.resize(nc,nc);
+                G.resize(nc);
                 M.resize(nc,nc);
+                EZ.resize(nc);
+                E.setZero();
+                E_tilde.setZero();
+                M.setZero();
+                G.setZero();
+                EZ.setZero();
             };
         };
 
         std::vector<segment_info> results;
         
-        Jacobian alfa_N;
-        Eigen::VectorXd v_constr;//v = M_0^-1*(beta_N - E_constr_a^T*a[0] - G_constr[0])
-        Eigen::MatrixXd M_0_inverse;
+        Jacobian alfa_N,alfa_N2;
+        Eigen::MatrixXd M_0_inverse,Um,Vm;
         JntArray beta_N;
-        Eigen::VectorXd nu,nu_sum;
+        Eigen::VectorXd nu,nu_sum,Sm,tmpm;
         Wrench qdotdot_sum;
+        
+        Frame F_total;
     };
 }
 
