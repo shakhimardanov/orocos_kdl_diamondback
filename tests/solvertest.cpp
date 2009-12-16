@@ -3,7 +3,8 @@
 #include <framevel_io.hpp>
 #include <kinfam_io.hpp>
 #include <time.h>
-
+#include <fstream>
+#include <chainidsolver_constraint_vereshchagin.hpp>
 
 CPPUNIT_TEST_SUITE_REGISTRATION( SolverTest );
 
@@ -75,6 +76,15 @@ void SolverTest::setUp()
     chain4.addSegment(Segment("Segment 5", Joint("Joint 5", Vector(0,0,0), Vector(0,0,1),Joint::RotAxis),
                               Frame(Vector(0.0,0.0,0.1))));
 
+    //chaindyn.addSegment(Segment(Joint(Joint::None),Frame(Vector(0,0.0,0)),RigidBodyInertia(1.0,Vector(0,0,0))));
+    chaindyn.addSegment(Segment(Joint(Joint::RotX),Frame(Vector(0,0,-0.4)),RigidBodyInertia(0.3,Vector(0,0,0))));
+    chaindyn.addSegment(Segment(Joint(Joint::RotX),Frame(Vector(0,0,-0.4)),RigidBodyInertia(0.3,Vector(0,0,0))));
+//    chaindyn.addSegment(Segment(Joint(Joint::RotX),Frame(Vector(0,1,-0.)),RigidBodyInertia(1,Vector(0,0,0))));
+//    chaindyn.addSegment(Segment(Joint(Joint::RotZ),Frame(Vector(0,1,-0.)),RigidBodyInertia(1,Vector(0,0,0))));
+//    chaindyn.addSegment(Segment(Joint(Joint::RotX),Frame(Vector(0,1,-0.)),RigidBodyInertia(1,Vector(0,0,0))));
+//    chaindyn.addSegment(Segment(Joint(Joint::RotZ),Frame(Vector(0,1,-0.)),RigidBodyInertia(1,Vector(0,0,0))));
+//    chaindyn.addSegment(Segment(Joint(Joint::RotX),Frame(Vector(0,1,-0.)),RigidBodyInertia(1,Vector(0,0,0))));
+    
 }
 
 void SolverTest::tearDown()
@@ -212,6 +222,97 @@ void SolverTest::FkPosAndIkPosTest()
     FkPosAndIkPosLocal(chain4,fksolver4,iksolver4_givens);
 }
 
+void SolverTest::VereshchaginTest(){
+
+
+    unsigned int nc=1;
+    Jacobian alfa(nc);
+    JntArray beta(nc);
+    alfa.data.transpose()<<0,0,1,0,0,0;
+    //0,0,0,0,0,0;
+//        0,1,0,0,0,0,
+//        0,0,0,1,0,0,
+//        0,0,0,0,1,0,
+//        0,0,0,0,0,1;
+        
+    ChainIdSolver_Constraint_Vereshchagin ikacc(chaindyn,Twist(Vector(0.0,0,-9.81),Vector::Zero()),nc);
+    ChainFkSolverVel_recursive fkposvel(chaindyn);
+    JntArrayVel q(chaindyn.getNrOfJoints());
+    JntArray qdotdot(chaindyn.getNrOfJoints());
+    JntArray torques(chaindyn.getNrOfJoints());
+    Wrenches f_ext(chaindyn.getNrOfSegments());
+    SetToZero(q);
+    SetToZero(torques);
+    for(unsigned int i=0;i<chaindyn.getNrOfSegments();i++)
+        SetToZero(f_ext[i]);
+    q.q(0)=0.0;
+    q.q(1)=M_PI_4;
+    //q.q(0)=0;
+    //q.q(1)=0.5;
+    FrameVel ee_start,ee;
+    std::cout<<"q: "<<q.q<<std::endl;
+    fkposvel.JntToCart(q,ee_start);
+    fkposvel.JntToCart(q,ee);
+    std::cout<<"ee: "<<ee.p.p.y()<<","<<ee.p.p.z()<<std::endl;
+    double T=2.;
+    double dt=0.001;
+    std::ofstream fout;
+    fout.open("vereshchagin_result.txt");
+    fout<<"time"<<"  "<<"torque_1"<<"  "<<"torque_2"<<"  "<<"q_1"<<"  "<<"q_2"<<"  "<<"qdot_1"<<"  "<<"qdot_2"<<"  "<<"qdotdot_1"<<"  "<<"qdotdot_2"<<"  "<<"y"<<"  "<<"z"<<std::endl;
+    clock_t start, finish;
+    start = clock();        
+    int times=100;
+    double prev_error=0.0;
+    double integral=0.0;
+    for(double t=0.0;t<10;t+=dt){
+        //f_ext[1]=ee.M.R.Inverse(Wrench(Vector(0.0,-1.0,1.0 ),Vector::Zero()));
+        //beta.data<<1;//,0;
+        //double intbeta0=0.0;
+        double error=0.5-ee.p.p.z();
+        integral+=error*dt;
+        double deriv = (error-prev_error)/dt;
+        beta.data(0)=20.0*error+15.*integral+0.*deriv-8.0*ee.p.v.z();
+        //beta.data(1)=2000*(ee_start.p.p.y()-ee.p.p.y())-20.0*ee.p.v.y();//0.0;//(ee_start.p.p.y()-ee.p.p.y())/(T*T);
+        //std::cout<<"beta: "<<beta<<std::endl;
+        torques(0)=-0.5*q.qdot(0);
+        torques(1)=-0.7*q.qdot(1);
+        ikacc.CartToJnt(q.q, q.qdot, qdotdot,alfa,beta,f_ext,torques);
+        q.q.data+=(q.qdot.data+qdotdot.data*dt/2)*dt;
+        q.qdot.data+=qdotdot.data*dt;
+        /*
+        std::cout<<"qdotdot:"<<qdotdot<<std::endl;
+        std::cout<<"qdot:"<<q.qdot<<std::endl;
+        std::cout<<"q: "<<q.q<<std::endl;
+        */
+        fout<<t<<"   ";
+        fout<<torques(0)<<"  "<<torques(1)<<"  ";
+        fout<<q.q(0)<<"  "<<q.q(1)<<"   ";
+        fout<<q.qdot(0)<<"  "<<q.qdot(1)<<"   ";
+        fout<<qdotdot(0)<<"  "<<qdotdot(1)<<"   ";
+        
+        fkposvel.JntToCart(q,ee);
+        
+        fout<<ee.p.p.y()<<"  "<<ee.p.p.z()<<std::endl;
+        /*
+        std::cout<<"ee.p: "<<ee.p.p.y()<<","<<ee.p.p.z()<<std::endl;
+        std::cout<<"ee.v: "<<ee.p.v.y()<<","<<ee.p.v.z()<<std::endl;
+        */
+    }
+    fout.close();
+    finish = clock();
+        
+    //std::cout<<(double(finish - start))<<std::endl;
+    
+    std::cout<<(double(finish - start)/CLOCKS_PER_SEC )<<std::endl;
+    
+    //std::cout<<"q: "<<q.q<<std::endl;
+    //std::cout<<"u: "<<torques<<std::endl;
+    fkposvel.JntToCart(q,ee);
+    std::cout<<"ee_start: "<<ee_start.p.p.y()<<","<<ee_start.p.p.z()<<std::endl;
+    std::cout<<"ee.p: "<<ee.p.p.y()<<","<<ee.p.p.z()<<std::endl;
+    //std::cout<<"ee.v: "<<ee.p.v.y()<<","<<ee.p.v.z()<<std::endl;
+    
+}
 
 
 void SolverTest::FkPosAndJacLocal(Chain& chain,ChainFkSolverPos& fksolverpos,ChainJntToJacSolver& jacsolver)
