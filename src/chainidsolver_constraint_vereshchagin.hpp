@@ -57,7 +57,7 @@ namespace KDL{
         
     private:
         //Functions to calculate velocity, propagated inertia, propagated bias forces, constraint forces and accelerations
-        void initial_upwards_sweep(const JntArray &q, const JntArray &q_dot, const Wrenches& f_ext);
+        void initial_upwards_sweep(const JntArray &q, const JntArray &q_dot,const JntArray &q_dotdot, const Wrenches& f_ext);
         void downwards_sweep(const Jacobian& alfa,const JntArray& torques);
         void constraint_calculation(const JntArray& beta);
         void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques);
@@ -81,6 +81,7 @@ namespace KDL{
             Wrench R;//wrench p of the bias forces 
             Wrench R_tilde;//vector of wrench p of the bias forces (new) in matrix form
             Twist C;//constraint
+            Twist A;//constraint
             ArticulatedBodyInertia H;//I (expressed in 6*6 matrix) 
             ArticulatedBodyInertia P;//I (expressed in 6*6 matrix) 
             ArticulatedBodyInertia P_tilde;//I (expressed in 6*6 matrix) 

@@ -22,7 +22,7 @@
 #include "chainidsolver_constraint_vereshchagin.hpp"
 #include "frames_io.hpp"
 #include "utilities/svd_eigen_HH.hpp"
-#include<Eigen/Cholesky>
+//#include<Eigen/Cholesky>
 
 namespace KDL{
     using namespace Eigen;
@@ -34,6 +34,7 @@ namespace KDL{
         acc_root=root_acc;
 
         //Provide the necessary memory for computing the inverse of M0
+        nu_sum.resize(nc);
         M_0_inverse.resize(nc,nc);
         Um=MatrixXd::Identity(nc,nc);
         Vm=MatrixXd::Identity(nc,nc);
@@ -51,7 +52,7 @@ namespace KDL{
             return -2;
 
         //do an upward recursion for position and velocities
-        this->initial_upwards_sweep(q, q_dot, f_ext);
+        this->initial_upwards_sweep(q, q_dot, q_dotdot,f_ext);
         //do an inward recursion for inertia, forces and constraints
         this->downwards_sweep(alfa, torques);
         //Solve for the constraint forces
@@ -60,7 +61,7 @@ namespace KDL{
         this->final_upwards_sweep(q_dotdot, torques);
     }
 
-    void ChainIdSolver_Constraint_Vereshchagin::initial_upwards_sweep(const JntArray &q, const JntArray &qdot, const Wrenches& f_ext)
+    void ChainIdSolver_Constraint_Vereshchagin::initial_upwards_sweep(const JntArray &q, const JntArray &qdot,const JntArray &qdotdot, const Wrenches& f_ext)
 	{
         unsigned int j=0;
         F_total=Frame::Identity();
@@ -76,37 +77,46 @@ namespace KDL{
             F_total=F_total*s.F;
             //The velocity due to the joint motion of the segment expressed in the segments reference frame (tip)
             Twist vj=s.F.M.Inverse(segment.twist(q(j),qdot(j)));
+            Twist aj=s.F.M.Inverse(segment.twist(q(j),qdotdot(j)));
             //The unit velocity due to the joint motion of the segment expressed in the segments reference frame (tip)
             s.Z=s.F.M.Inverse(segment.twist(q(j),1.0));
             //Put Z in the joint root reference frame:
             s.Z=s.F*s.Z;
             //std::cout<<"q: "<<q(j)<<std::endl;
             //The total velocity of the segment expressed in the the segments reference frame (tip)
-            if(i!=1)
+            if(i!=0){
                 s.v=s.F.Inverse(results[i].v)+vj;
-            else
+                //s.A=s.F.Inverse(results[i].A)+aj;
+                s.A=s.F.M.Inverse(results[i].A);
+            }
+            else{
                 s.v=vj;
-            
+                s.A=s.F.M.Inverse(acc_root);
+            }
             //c[i] = cj + v[i]xvj (remark: cj=0, since our S is not time dependent in local coordinates)
             //The velocity product acceleration
             s.C = s.v*vj;//This is a cross product
+
+            //s.A+=s.C;
+            //std::cout<<"segment"<<i<<" acceleration: "<<F_total.M*s.A<<std::endl;
             //Put C in the joint root reference frame
-            s.C=s.F*s.C;
+            s.C=s.F*s.C;//+F_total.M.Inverse(acc_root));
             //The rigid body inertia of the segment, expressed in the segments reference frame (tip)
             s.H=segment.getInertia();
         
             //wrench of the rigid body bias forces and the external forces on the segment (in body coordinates, tip)
-            s.U = s.v*(s.H*s.v) - f_ext[i];
-            
+            s.U = s.v*(s.H*s.v)- f_ext[i];
+            //std::cout<<"U"<<i<<": "<<s.U<<std::endl;
+            //std::cout<<"Z"<<i<<": "<<s.Z<<std::endl;
             if(segment.getJoint().getType()!=Joint::None)
-                {
-                    j++;
-                }
+                j++;
         }
+        //std::cout<<"last segment acceleration: "<<F_total.M*results[ns].A<<std::endl;
     }
 
 	void ChainIdSolver_Constraint_Vereshchagin::downwards_sweep(const Jacobian& alfa,const JntArray &torques)
 	{
+        unsigned int j=nj-1;
         for(int i=ns;i>=0;i--)
             {
                 //Get a handle for the segment we are working on.
@@ -119,7 +129,7 @@ namespace KDL{
                 //M is the (unit) acceleration energy already generated at link i
                 //G is the (unit) magnitude of the constraint forces at link i
                 //E are the (unit) constraint forces due to the constraints
-                if(i==(ns)){
+                if(i==ns){
                     s.P_tilde=s.H;
                     s.R_tilde=s.U;
                     s.M.setZero();
@@ -153,8 +163,15 @@ namespace KDL{
                     s.R_tilde=s.U+child.R+child.PC+child.PZ/child.D*child.u;
                     //equation c) (see Vereshchagin89)
                     s.E_tilde=child.E;
+                    /*
+                    std::cout<<"E"<<i+1<<": "<<s.E_tilde<<std::endl;
+                    std::cout<<"PZ"<<i+1<<": "<<vPZ<<std::endl;
+                    std::cout<<"EZ"<<i+1<<": "<<child.EZ<<std::endl;
+                    */
                     s.E_tilde-=(vPZ*child.EZ.transpose()).lazy()/child.D;
-
+                    /*
+                    std::cout<<"D"<<i+1<<": "<<child.D<<std::endl;
+                    */
                     //equation d) (see Vereshchagin89)
                     s.M=child.M;
                     s.M-=(child.EZ*child.EZ.transpose()).lazy()/child.D;
@@ -165,7 +182,8 @@ namespace KDL{
                     Vector6d vCiZDu;
                     vCiZDu<<Vector3d::Map(CiZDu.rot.data),Vector3d::Map(CiZDu.vel.data);
                     s.G+=(child.E.transpose()*vCiZDu).lazy();
-
+                    //std::cout<<"C: "<<child.D<<std::endl;
+                    //std::cout<<"u: "<<child.u<<std::endl;
                 }
                 if(i!=0){
                     //Transform all results to joint root coordinates of segment i (== body coordinates segment i-1)
@@ -189,34 +207,41 @@ namespace KDL{
                     //u=(Q-Z(R+PC)=sum of external forces along the joint axes, 
                     //R are the forces comming from the children, 
                     //Q is taken zero (do we need to take the previous calculated torques?
-                    s.u=torques(i-1)-dot(s.Z,s.R+s.PC);
+                    s.u=torques(j)-dot(s.Z,s.R+s.PC);
+                    //s.u=torques(j)-dot(s.Z,s.R);
                     
                     //Matrix form of Z, put rotations above translations
                     Vector6d vZ;
                     vZ<<Vector3d::Map(s.Z.rot.data),Vector3d::Map(s.Z.vel.data);
                     s.EZ=(s.E.transpose()*vZ).lazy();
+                
+                    if(chain.getSegment(i-1).getJoint().getType()!=Joint::None)
+                        j--;
                 }
-
-                /*        
-                std::cout<<"For segment "<<i<<std::endl;
-                std::cout<<"D: "<<s.D<<std::endl;
+                /*
+                std::cout<<"E~"<<i<<": "<<s.E_tilde<<std::endl;
+                std::cout<<"E"<<i<<": "<<s.E<<std::endl;
                 std::cout<<"Z: "<<s.Z<<std::endl;
+                std::cout<<"D: "<<s.D<<std::endl;
                 std::cout<<"PZ: "<<s.PZ<<std::endl;
                 std::cout<<"E'Z: "<<s.EZ<<std::endl;
+                std::cout<<"G: "<<s.G<<std::endl;
+                std::cout<<"M: "<<s.M<<std::endl;
+                */
+                /*
+                std::cout<<"For segment "<<i<<std::endl;
+                std::cout<<"D: "<<s.D<<std::endl;
                 std::cout<<"E~: "<<s.E_tilde<<std::endl;
                 std::cout<<"E: "<<s.E<<std::endl;
 
                 std::cout<<"E: "<<s.E<<std::endl;
                 std::cout<<"Z: "<<s.Z.rot<<s.Z.vel<<std::endl;
-                std::cout<<"G: "<<s.G<<std::endl;
-                std::cout<<"M: "<<s.M<<std::endl;
                 Matrix6d tmp;
                 tmp<<s.P_tilde.I,s.P_tilde.H,s.P_tilde.H.transpose(),s.P_tilde.M;
                 std::cout<<"P~: \n"<<tmp<<std::endl;
                 tmp<<s.P.I,s.P.H,s.P.H.transpose(),s.P.M;
                 std::cout<<"P: \n"<<tmp<<std::endl;
                 */
-          
             }
     }
     
@@ -233,12 +258,13 @@ namespace KDL{
         svd_eigen_HH(results[0].M,Um,Sm,Vm,tmpm);
         /*
         std::cout<<"U: "<<Um<<std::endl;
-        std::cout<<"S: "<<Sm<<std::endl;
         std::cout<<"V: "<<Vm<<std::endl;
         */  
+        //std::cout<<"S: "<<Sm<<std::endl;
+
         //truncated svd, what would sdls, dls physically mean?
         for(unsigned int i=0;i<nc;i++)
-            if(Sm(i)<1e-4)
+            if(Sm(i)<1e-14)
                 Sm(i)=0.0;
             else 
                 Sm(i)=1/Sm(i);
@@ -252,9 +278,17 @@ namespace KDL{
         Vector6d acc;
         acc<<Vector3d::Map(acc_root.rot.data),Vector3d::Map(acc_root.vel.data);
         nu_sum=-(results[0].E_tilde.transpose()*acc).lazy();
+        /*
+        std::cout<<"E~0: "<<results[0].E_tilde.transpose()<<std::endl;
+        std::cout<<"E~0*acc0: "<<acc<<std::endl;
+        std::cout<<"E~0*acc0: "<<nu_sum<<std::endl;
+        */
+        //nu_sum.setZero();
         nu_sum+=beta.data;
         nu_sum -= results[0].G;
+        //std::cout<<"G0: "<<results[0].G<<std::endl;
         nu = (M_0_inverse * nu_sum).lazy();
+        //std::cout<<"nu: "<<nu<<std::endl;
         /*
         std::cout<<"nu: "<<nu<<std::endl;
         std::cout<<"beta: "<<beta.data<<std::endl;
@@ -263,47 +297,58 @@ namespace KDL{
     }    
     
 
-	void ChainIdSolver_Constraint_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques){
-        {
-            unsigned int j=0;
-            
-            for(unsigned int i=1;i<=ns;i++){
-                segment_info& s=results[i];
-                //Calculation of joint and segment accelerations
-                //equation g) qdotdot[i] = D^-1*(Q - Z'(R + P(C + acc[i-1]) + E*nu))
-                // = D^-1(u - Z'(P*acc[i-1] + E*nu)
-                Twist a_p;
-                if(i==1)
-                    a_p=-acc_root;
-                else
-                    a_p=results[i-1].acc;
-                
-                //std::cout<<"a': "<<at<<std::endl;
-
-                //The contribution of the constraint forces at segment i
-                Vector6d tmp = s.E*nu;
-                Wrench constraint_force = Wrench(Vector(tmp(3),tmp(4),tmp(5)),
-                                                 Vector(tmp(0),tmp(1),tmp(2)));
-                //std::cout<<"constraint force"<<i<<": "<<constraint_force<<std::endl;
-                //Contribution of the acceleration of the parent (i-1)
-                Wrench parent_force = s.P*a_p;
-                //std::cout<<"parent force"<<i<<": "<<parent_force<<std::endl;
-                //The constraint force and acceleration force projected on the joint axes -> axis torque/force
-                double constraint_torque = dot(s.Z,parent_force+constraint_force);
-                //The result should be the torque at this joint
-                torques(j) = (s.u-constraint_torque);
-                q_dotdot(j) = torques(j)/s.D;
-                
-                //equation h) acc[i] = Fi*(acc[i-1] + Z[i]*qdotdot[i] + c[i]
-                s.acc=s.F.Inverse(a_p+s.Z*q_dotdot(j)+s.C);
-                
-                //std::cout<<"a: "<<s.acc<<std::endl;
-
-                if(chain.getSegment(i).getJoint().getType()!=Joint::None)
-                    {
-                        j++;
-                    }
+	void ChainIdSolver_Constraint_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques)
+    {
+        unsigned int j=0;
+        
+        for(unsigned int i=1;i<=ns;i++){
+            segment_info& s=results[i];
+            //Calculation of joint and segment accelerations
+            //equation g) qdotdot[i] = D^-1*(Q - Z'(R + P(C + acc[i-1]) + E*nu))
+            // = D^-1(u - Z'(P*acc[i-1] + E*nu)
+            Twist a_g;
+            Twist a_p;
+            if(i==1){
+                a_p=acc_root;
+            }else{
+                a_p=results[i-1].acc;
             }
+            
+            //The contribution of the constraint forces at segment i
+            Vector6d tmp = s.E*nu;
+            //std::cout<<"E"<<i<<": "<<s.E<<std::endl;
+            Wrench constraint_force = Wrench(Vector(tmp(3),tmp(4),tmp(5)),
+                                             Vector(tmp(0),tmp(1),tmp(2)));
+            /*
+            if(i==ns){
+                //std::cout<<"nu: "<<nu<<std::endl;
+                //std::cout<<"E~: "<<s.E_tilde<<std::endl;
+                std::cout<<"constraint_force: "<<F_total.M*s.F.Inverse(constraint_force)<<std::endl;
+                std::cout<<"parent force: "<<F_total.M*s.F.Inverse(s.P*a_p)<<std::endl;
+            }
+            */
+            //Contribution of the acceleration of the parent (i-1)
+            Wrench parent_force = s.P*a_p;
+            //The constraint force and acceleration force projected on the joint axes -> axis torque/force
+            double constraint_torque = -dot(s.Z,constraint_force);
+            //The result should be the torque at this joint
+            double torque_local=torques(j);
+            torques(j) = constraint_torque;
+            q_dotdot(j) = (s.u-dot(s.Z,parent_force)+torques(j))/s.D;
+            //q_dotdot(j) = (torques(j))/s.D;
+
+            //equation h) acc[i] = Fi*(acc[i-1] + Z[i]*qdotdot[i] + c[i]
+            //std::cout<<"Z"<<i<<": "<<s.Z<<std::endl;
+            //std::cout<<"C"<<i<<": "<<s.C<<std::endl;
+            s.acc=s.F.Inverse(a_p+s.Z*q_dotdot(j)+s.C);
+            //std::cout<<"acceleration_local: "<<s.acc<<std::endl;
+            //q_dotdot(j) = (s.u+constraint_torque)/s.D;
+            
+
+            if(chain.getSegment(i-1).getJoint().getType()!=Joint::None)
+                j++;
         }
+        //std::cout<<"endpoint acceleration: "<<F_total.M*results[ns].acc<<std::endl;
+        //std::cout<<"endpoint position: "<<F_total<<std::endl;
     }
 }//namespace
