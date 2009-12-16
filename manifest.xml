@@ -3,4 +3,9 @@
 <author>Ruben Smits/ruben.smits@mech.kuleuven.be </author>
 <license>LGPL</license>
 <depend package="eigen" />
+
+<export>
+  <cpp cflags="-I${prefix}/src" lflags="-L${prefix}/lib -lorocos-kdl"/>
+</export>
+
 </package>
