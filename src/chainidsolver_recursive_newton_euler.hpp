@@ -1,4 +1,4 @@
-// Copyright  (C)  2007  Ruben Smits <ruben dot smits at mech dot kuleuven dot be>
+// Copyright  (C)  2009  Ruben Smits <ruben dot smits at mech dot kuleuven dot be>
 
 // Version: 1.0
 // Author: Ruben Smits <ruben dot smits at mech dot kuleuven dot be>
@@ -19,77 +19,57 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
-#ifndef KDL_CHAINIDSOLVER_RNE_HPP
-#define KDL_CHAINIDSOLVER_RNE_HPP
+#ifndef KDL_CHAIN_IKSOLVER_RECURSIVE_NEWTON_EULER_HPP
+#define KDL_CHAIN_IKSOLVER_RECURSIVE_NEWTON_EULER_HPP
 
-#include "segment.hpp"
-#include <string>
+#include "chainidsolver.hpp"
 
-namespace KDL {
+namespace KDL{
     /**
-	  * \brief This class encapsulates a <strong>serial</strong> kinematic
-	  * interconnection structure. It is build out of segments.
+     * \brief Recursive newton euler inverse dynamics solver
      *
-     * @ingroup KinematicFamily
+     * The algorithm implementation is based on the book "Rigid Body
+     * Dynamics Algorithms" of Roy Featherstone, 2008
+     * (ISBN:978-0-387-74314-1) See page 96 for the pseudo-code.
+     * 
+     * It calculates the torques for the joints, given the motion of
+     * the joints (q,qdot,qdotdot), external forces on the segments
+     * (expressed in the segments reference frame) and the dynamical
+     * parameters of the segments.
      */
-    class Chain {
-    private:
-        int nrOfJoints;
-        int nrOfSegments;
+    class ChainIdSolver_RNE : public ChainIdSolver{
     public:
-        std::vector<Segment> segments;
         /**
-         * The constructor of a chain, a new chain is always empty.
-         *
+         * Constructor for the solver, it will allocate all the necessary memory
+         * \param chain The kinematic chain to calculate the inverse dynamics for, an internal copy will be made.
+         * \param grav The gravity vector to use during the calculation.
          */
-        Chain();
-        Chain(const Chain& in);
-        Chain& operator = (const Chain& arg);
+        ChainIdSolver_RNE(const Chain& chain,Vector grav);
+        ~ChainIdSolver_RNE(){};
+        
+        /**
+         * Function to calculate from Cartesian forces to joint torques.
+         * Input parameters;
+         * \param q The current joint positions
+         * \param q_dot The current joint velocities
+         * \param q_dotdot The current joint accelerations
+         * \param f_ext The external forces (no gravity) on the segments
+         * Output parameters:
+         * \param torques the resulting torques for the joints
+         */
+        int CartToJnt(const JntArray &q, const JntArray &q_dot, const JntArray &q_dotdot, const Wrenches& f_ext,JntArray &torques);
 
-        /**
-         * Adds a new segment to the <strong>end</strong> of the chain.
-         *
-         * @param segment The segment to add
-         */
-        void addSegment(const Segment& segment);
-        /**
-         * Adds a complete chain to the <strong>end</strong> of the chain
-         * The added chain is copied.
-         *
-         * @param chain The chain to add
-         */
-        void addChain(const Chain& chain);
-
-        /**
-         * Request the total number of joints in the chain.\n
-         * <strong> Important:</strong> It is not the
-         * same as the total number of segments since a segment does not
-         * need to have a joint. This function is important when
-         * creating a KDL::JntArray to use with this chain.
-         * @return total nr of joints
-         */
-        unsigned int getNrOfJoints()const {return nrOfJoints;};
-        /**
-         * Request the total number of segments in the chain.
-         * @return total number of segments
-         */
-        unsigned int getNrOfSegments()const {return nrOfSegments;};
-
-        /**
-         * Request the nr'd segment of the chain. There is no boundary
-         * checking.
-         *
-         * @param nr the nr of the segment starting from 0
-         *
-         * @return a constant reference to the nr'd segment
-         */
-        const Segment& getSegment(unsigned int nr)const;
-
-        virtual ~Chain();
+    private:
+        Chain chain;
+        unsigned int nj;
+        unsigned int ns;
+        std::vector<Frame> X;
+        std::vector<Twist> S;
+        std::vector<Twist> v;
+        std::vector<Twist> a;
+        std::vector<Wrench> f;
+        Twist ag;
     };
-
-
-
-}//end of namespace KDL
+}
 
 #endif
