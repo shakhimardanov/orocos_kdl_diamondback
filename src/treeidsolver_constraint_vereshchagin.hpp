@@ -32,6 +32,11 @@ namespace KDL{
      * 
      * For a tree
      */
+    struct TreeConstraint{
+        std segment_name;
+        Vector<6,1,double> Ai;
+    }
+
     class TreeIdSolver_Constraint_Vereshchagin{
     public:
         /**

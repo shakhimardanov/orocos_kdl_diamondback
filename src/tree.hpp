@@ -46,9 +46,9 @@ namespace KDL
         std::vector<SegmentMap::const_iterator > children;
         TreeElement(const Segment& segment_in,const SegmentMap::const_iterator& parent_in,unsigned int q_nr_in)
         {
-			q_nr=q_nr_in;
-            segment=segment_in;
-            parent=parent_in;
+	  q_nr=q_nr_in;
+	  segment=segment_in;
+	  parent=parent_in;
         };
         static TreeElement Root(const std::string& root_name)
         {
@@ -175,6 +175,7 @@ namespace KDL
 
     };
 }
+
 #endif
 
 

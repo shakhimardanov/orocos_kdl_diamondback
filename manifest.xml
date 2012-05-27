@@ -2,10 +2,15 @@
 <description brief="experimental branch of kdl">Experimental version of kdl, contains the new recursive acceleration based constraint solvers</description>
 <author>Ruben Smits/ruben.smits@mech.kuleuven.be </author>
 <license>LGPL</license>
-<depend package="eigen" />
+<url>http://www.orocos.org/kdl</url>
 
+
+<depend package="eigen" />
+<rosdep name="python-sip4"/>
 <export>
   <cpp cflags="-I${prefix}/src" lflags="-L${prefix}/lib -lorocos-kdl"/>
+  <python path="${prefix}/src/lib"/>
+  <doxygen excludes="build" file-patterns="*.cpp *.hpp *.dox *.h"/>
 </export>
 
 </package>

@@ -73,10 +73,12 @@ namespace KDL{
         //Sweep from leaf to root
         j=nj-1;
         for(int i=ns-1;i>=0;i--){
-            if(chain.getSegment(i).getJoint().getType()!=Joint::None)
+            if(chain.getSegment(i).getJoint().getType()!=Joint::None){
                 torques(j--)=dot(S[i],f[i]);
+            }
             if(i!=0)
                 f[i-1]=f[i-1]+X[i]*f[i];
         }
+        return 0;
     }
 }//namespace
