@@ -1,8 +1,8 @@
-// Copyright  (C)  2009, 2011
+// Copyright  (C)  2009
 
 // Version: 1.0
-// Author: Ruben Smits, Herman Bruyninckx, Azamat Shakhimardanov
-// Maintainer: Ruben Smits, Azamat Shakhimardanov
+// Author:
+// Maintainer:
 // URL: http://www.orocos.org/kdl
 
 // This library is free software; you can redistribute it and/or
@@ -29,11 +29,8 @@ namespace KDL
 using namespace Eigen;
 
 ChainIdSolver_Vereshchagin::ChainIdSolver_Vereshchagin(const Chain& chain_, Twist root_acc, unsigned int _nc) :
-     chain(chain_)
-    ,nj(chain.getNrOfJoints())
-    ,ns(chain.getNrOfSegments())
-    ,nc(_nc)
-    ,results(ns + 1, segment_info(nc))
+chain(chain_), nj(chain.getNrOfJoints()), ns(chain.getNrOfSegments()), nc(_nc),
+results(ns + 1, segment_info(nc))
 {
     acc_root = root_acc;
 
@@ -49,27 +46,18 @@ ChainIdSolver_Vereshchagin::ChainIdSolver_Vereshchagin(const Chain& chain_, Twis
 int ChainIdSolver_Vereshchagin::CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques)
 {
     //Check sizes always
-    //18.04.12 have to put it back as it was. There is a problem when checking for joint type None, because when chain/tree is asked to return number of joint it only counts that are not None, but when checking for the type often we go through segment and not chain/tree. there joint return type will always return sth even though it is irrelevant to the chain and "number" of joints in the chain
     if (q.rows() != nj || q_dot.rows() != nj || q_dotdot.rows() != nj || torques.rows() != nj || f_ext.size() != ns)
-          return -1;
+        return -1;
     if (alfa.columns() != nc || beta.rows() != nc)
         return -2;
     //do an upward recursion for position and velocities
-
     this->initial_upwards_sweep(q, q_dot, q_dotdot, f_ext);
-
     //do an inward recursion for inertia, forces and constraints
-
     this->downwards_sweep(alfa, torques);
-
     //Solve for the constraint forces
-
     this->constraint_calculation(beta);
-
     //do an upward recursion to propagate the result
-
     this->final_upwards_sweep(q_dotdot, torques);
-
     return 0;
 }
 
@@ -82,35 +70,37 @@ void ChainIdSolver_Vereshchagin::initial_upwards_sweep(const JntArray &q, const 
     F_total = Frame::Identity();
     for (unsigned int i = 0; i < ns; i++)
     {
-        const Segment& segment = chain.getSegment(i);
-	if (segment.getJoint().getType() != Joint::None && i>0 ) //CORRECTION FROM RUBEN
-            j++;        
         //Express everything in the segments reference frame (body coordinates)
         //which is at the segments tip, i.e. where the next joint is attached.
-	
-        //Calculate segment properties: X,S,vj,cj
-	segment_info& s = results[i + 1];
-        //The pose between the joint root and the segment tip (tip expressed in joint root coordinates)
-        s.F = segment.pose(q(j)); //X pose of each link in link coord system
 
-        F_total = F_total * s.F; //X pose of the each link in root coord system
-        s.F_base = F_total; //X pose of the each link in root coord system for getter functions
+        //Calculate segment properties: X,S,vj,cj
+        const Segment& segment = chain.getSegment(i);
+        segment_info& s = results[i + 1];
+        //The pose between the joint root and the segment tip (tip expressed in joint root coordinates)
+        s.F = segment.pose(q(j)); // Azamat: X pose of each link in link coord system
+
+        F_total = F_total * s.F; // Azamat: X pose of the each link in root coord system
+        //std::cout << "F_total:  " << F_total << std::endl;
+        //std::cout << "F_total_inverse:  " << F_total.Inverse() << std::endl;
+        //std::cout << "F_total_M_inverse:  " << F_total.M.Inverse() << std::endl;
+        s.F_base = F_total; // Azamat: X pose of the each link in root coord system for getter functions
 
         //The velocity due to the joint motion of the segment expressed in the segments reference frame (tip)
-        Twist vj = s.F.M.Inverse(segment.twist(q(j), qdot(j))); //XDot of each link
-        Twist aj = s.F.M.Inverse(segment.twist(q(j), qdotdot(j))); //XDotDot of each link
+        Twist vj = s.F.M.Inverse(segment.twist(q(j), qdot(j))); //Azamat: XDot of each link
+        Twist aj = s.F.M.Inverse(segment.twist(q(j), qdotdot(j))); //Azamat: XDotDot of each link
 
         //The unit velocity due to the joint motion of the segment expressed in the segments reference frame (tip)
         s.Z = s.F.M.Inverse(segment.twist(q(j), 1.0));
         //Put Z in the joint root reference frame:
         s.Z = s.F * s.Z;
-
+        //  std::cout<<"q: "<<q(j)<<std::endl;
         //The total velocity of the segment expressed in the the segments reference frame (tip)
         if (i != 0)
         {
-            s.v = s.F.Inverse(results[i].v) + vj; // recursive velocity of each link in segment frame
+            s.v = s.F.Inverse(results[i].v) + vj; // Azamat: recursive velocity of each link in segment frame
+
             //s.A=s.F.Inverse(results[i].A)+aj;
-	    s.A = s.F.M.Inverse(results[i].A);
+            s.A = s.F.M.Inverse(results[i].A);
         }
         else
         {
@@ -119,20 +109,32 @@ void ChainIdSolver_Vereshchagin::initial_upwards_sweep(const JntArray &q, const 
         }
         //c[i] = cj + v[i]xvj (remark: cj=0, since our S is not time dependent in local coordinates)
         //The velocity product acceleration
-        std::cout << i << " Initial upward link total acc s.A= " << s.A << std::endl;
-        std::cout << i << " Initial upward joint acc qdotdot(j)= " << qdotdot(j) << std::endl;
-        std::cout << i << " Initial upward link joint contrib acc aj= " << aj << std::endl;
-        s.C = s.v*vj; //This is a cross product: cartesian space BIAS acceleration in local link coord.
+        //std::cout << i << " Initial upward" << s.v << std::endl;
+        s.C = s.v*vj; //This is a cross product Azamat: cartesian space BIAS acceleration in local link coord.
+
+        //s.A+=s.C;
+        //std::cout<<"segment"<<i<<" acceleration: "<<F_total.M*s.A<<std::endl;
+
         //Put C in the joint root reference frame
         s.C = s.F * s.C; //+F_total.M.Inverse(acc_root));
         //The rigid body inertia of the segment, expressed in the segments reference frame (tip)
         s.H = segment.getInertia();
 
         //wrench of the rigid body bias forces and the external forces on the segment (in body coordinates, tip)
-        //external forces are taken into account through s.U.
+        //Azamat: external forces are taken into account through s.U. Check why s.U is given as below
         Wrench FextLocal = F_total.M.Inverse() * f_ext[i];
         s.U = s.v * (s.H * s.v) - FextLocal; //f_ext[i];
-        
+       
+#ifdef DEBUGGER
+        std::cout << "f_ext" << i << ": " << f_ext[i] << std::endl;
+        std::cout << "FextLocal" << i << ": " << FextLocal << std::endl;
+        std::cout << "U" << i << ": " << s.U << std::endl;
+        std::cout << "FTotal " << s.F_base << std::endl << std::endl;
+        std::cout << "Z" << i << ": " << s.Z << std::endl;
+#endif DEBUGGER
+
+        if (segment.getJoint().getType() != Joint::None)
+            j++;
     }
 
 }
@@ -211,6 +213,8 @@ void ChainIdSolver_Vereshchagin::downwards_sweep(const Jacobian& alfa, const Jnt
             Vector6d vCiZDu;
             vCiZDu << Vector3d::Map(CiZDu.rot.data), Vector3d::Map(CiZDu.vel.data);
             s.G += (child.E.transpose() * vCiZDu).lazy();
+            // std::cout<<"C: "<<child.D<<std::endl;
+            // std::cout<<"u: "<<child.u<<std::endl;
         }
         if (i != 0)
         {
@@ -237,20 +241,62 @@ void ChainIdSolver_Vereshchagin::downwards_sweep(const Jacobian& alfa, const Jnt
             //R are the forces comming from the children,
             //Q is taken zero (do we need to take the previous calculated torques?
 
-            //projection of coriolis and centrepital forces into joint subspace (0 0 Z)
-	    printf( "In downward sweep in solver torques %f\n", torques(j));
-
+            //Azamat: projection of coriolis and centrepital forces into joint subspace (0 0 Z)
             s.totalBias = -dot(s.Z, s.R + s.PC);
             s.u = torques(j) + s.totalBias;
-	    printf( "In downward sweep in solver s.u %f\n", s.u);
+
+#ifdef DEBUGGER
+            printf("Downwar sweep joint, s.u,  torques(j) %d                  %f                    %f\n", j, s.u, torques(j));
+            std::cout << "totalBias" << i << ": " << s.totalBias << std::endl;
+            std::cout << "s.u" << i << ": " << s.u << std::endl;
+            std::cout << "s.R = " << s.R << std::endl;
+            std::cout << "s.PC = " << s.PC << std::endl;
+            std::cout << "-dot(s.Z,s.R+s.PC)" << -dot(s.Z, s.R + s.PC) << std::endl;
+            std::cout << "s.u = " << s.u << std::endl;
+#endif DEBUGGER
+            // Azamat: Total forces on the joint (comes from the joint torques (generelazed forces) and coriolis/centrepital)
+            //printf("Joint#           generalized force          s.R            s.PC\n");
+            //printf("%d                  %f                    %f              %f\n",j, s.u, dot(s.Z,s.R), dot(s.Z,s.PC));
+
+            //s.u=torques(j)-dot(s.Z,s.R);
+
             //Matrix form of Z, put rotations above translations
             Vector6d vZ;
             vZ << Vector3d::Map(s.Z.rot.data), Vector3d::Map(s.Z.vel.data);
             s.EZ = (s.E.transpose() * vZ).lazy();
 
-            if (chain.getSegment(i - 1).getJoint().getType() != Joint::None && i>0)
+            if (chain.getSegment(i - 1).getJoint().getType() != Joint::None)
                 j--;
         }
+
+        /*
+        std::cout<<"E~ "<<i<<": "<<s.E_tilde<<std::endl;
+        std::cout<<"R~ "<<i<<": "<<s.R_tilde<<std::endl;
+        std::cout<<"M  "<<i<<": "<<s.M<<std::endl;
+        std::cout<<"G  "<<i<<": "<<s.G<<std::endl;
+         *
+        std::cout<<"E"<<i<<": "<<s.E<<std::endl;
+        std::cout<<"Z: "<<s.Z<<std::endl;
+        std::cout<<"D: "<<s.D<<std::endl;
+        std::cout<<"PZ: "<<s.PZ<<std::endl;
+        std::cout<<"E'Z: "<<s.EZ<<std::endl;
+        std::cout<<"G: "<<s.G<<std::endl;
+        std::cout<<"M: "<<s.M<<std::endl;
+         */
+        /*
+        std::cout<<"For segment "<<i<<std::endl;
+        std::cout<<"D: "<<s.D<<std::endl;
+        std::cout<<"E~: "<<s.E_tilde<<std::endl;
+        std::cout<<"E: "<<s.E<<std::endl;
+
+        std::cout<<"E: "<<s.E<<std::endl;
+        std::cout<<"Z: "<<s.Z.rot<<s.Z.vel<<std::endl;
+        Matrix6d tmp;
+        tmp<<s.P_tilde.I,s.P_tilde.H,s.P_tilde.H.transpose(),s.P_tilde.M;
+        std::cout<<"P~: \n"<<tmp<<std::endl;
+        tmp<<s.P.I,s.P.H,s.P.H.transpose(),s.P.M;
+        std::cout<<"P: \n"<<tmp<<std::endl;
+         */
     }
 }
 
@@ -263,7 +309,7 @@ void ChainIdSolver_Vereshchagin::constraint_calculation(const JntArray& beta)
     //std::cout<<"augmented M0: "<<results[0].M<<std::endl;
 
 
-    //ToDo: Need to check ill conditions
+    //Azamat: Need to check ill conditions
 
     //M_0_inverse=results[0].M.inverse();
     svd_eigen_HH(results[0].M, Um, Sm, Vm, tmpm);
@@ -278,15 +324,30 @@ void ChainIdSolver_Vereshchagin::constraint_calculation(const JntArray& beta)
     M_0_inverse = (results[0].M * Um.transpose()).lazy();
     //results[0].M.ldlt().solve(MatrixXd::Identity(nc,nc),&M_0_inverse);
     //results[0].M.computeInverse(&M_0_inverse);
+    //std::cout<<"inv(M0): "<<M_0_inverse<<std::endl;
+
     Vector6d acc;
     acc << Vector3d::Map(acc_root.rot.data), Vector3d::Map(acc_root.vel.data);
     nu_sum = -(results[0].E_tilde.transpose() * acc).lazy();
+
+    //std::cout<<"E~0: "<<results[0].E_tilde.transpose()<<std::endl;
+    // std::cout<<"E~0*acc0: "<<acc<<std::endl;
+    //std::cout<<"E~0*acc0: "<<nu_sum<<std::endl;
+
     //nu_sum.setZero();
     nu_sum += beta.data;
     nu_sum -= results[0].G;
+    //std::cout<<"G0: "<<results[0].G<<std::endl;
 
     //equation f) nu = M_0_inverse*(beta_N - E0_tilde`*acc0 - G0)
     nu = (M_0_inverse * nu_sum).lazy();
+
+    //      std::cout<<"nu: "<<nu<<std::endl;
+    /*
+    std::cout<<"nu: "<<nu<<std::endl;
+    std::cout<<"beta: "<<beta.data<<std::endl;
+    std::cout<<"G: "<<results[0].G<<std::endl;
+     */
 }
 
 void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques)
@@ -295,11 +356,7 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
 
     for (unsigned int i = 1; i <= ns; i++)
     {
-        if (chain.getSegment(i - 1).getJoint().getType() != Joint::None && i>1)
-            j++;
         segment_info& s = results[i];
-
-	printf( "In downward sweep in solver torques %f\n", torques(j));
         //Calculation of joint and segment accelerations
         //equation g) qdotdot[i] = D^-1*(Q - Z'(R + P(C + acc[i-1]) + E*nu))
         // = D^-1(u - Z'(P*acc[i-1] + E*nu)
@@ -316,10 +373,19 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
 
         //The contribution of the constraint forces at segment i
         Vector6d tmp = s.E*nu;
+        //std::cout<<"E"<<i<<": "<<s.E<<std::endl;
         Wrench constraint_force = Wrench(Vector(tmp(3), tmp(4), tmp(5)),
                                          Vector(tmp(0), tmp(1), tmp(2)));
-	printf("In final sweep constraint forces components %f    %f    %f   %f    %f   %f\n",constraint_force.force[0], constraint_force.force[1], constraint_force.force[2], constraint_force.torque[0], constraint_force.torque[1], constraint_force.torque[2]);
-        //acceleration components are also computed
+        /*
+        if(i==ns){
+            //std::cout<<"nu: "<<nu<<std::endl;
+            //std::cout<<"E~: "<<s.E_tilde<<std::endl;
+            std::cout<<"constraint_force: "<<F_total.M*s.F.Inverse(constraint_force)<<std::endl;
+            std::cout<<"parent force: "<<F_total.M*s.F.Inverse(s.P*a_p)<<std::endl;
+        }
+         */
+
+        //Azamat: acceleration components are also computed
         //Contribution of the acceleration of the parent (i-1)
         Wrench parent_force = s.P*a_p;
         double parent_forceProjection = -dot(s.Z, parent_force);
@@ -328,19 +394,48 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
         //The constraint force and acceleration force projected on the joint axes -> axis torque/force
         double constraint_torque = -dot(s.Z, constraint_force);
         //The result should be the torque at this joint
-	printf( "In downward sweep in solver torques/constraint torque  %f\n", constraint_torque);
-        torques(j) = constraint_torque;
 
+        torques(j) = constraint_torque;
         //s.constAccComp = torques(j) / s.D;
         s.constAccComp = constraint_torque / s.D;
         s.nullspaceAccComp = s.u / s.D;
-        //total joint space acceleration resulting from accelerations of parent joints, constraint forces and
-        // nullspace forces.
-        q_dotdot(j) = (s.nullspaceAccComp + parentAccComp + s.constAccComp);
-        s.acc = s.F.Inverse(a_p + s.Z * q_dotdot(j) + s.C);//returns acceleration in link distal tip coordinates. For use needs to be transformed
-    }
-}
 
+        q_dotdot(j) = (s.nullspaceAccComp + parentAccComp + s.constAccComp);
+
+#ifdef DEBUGGER
+        // printf("Torque contributions U - %f,  biasForces - %f, constraintTorque - %f,  parentForces - %f\n", s.u,  s.totalBias, constraint_torque,  parent_forceProjection);
+        // printf("Articulated body inertia D - %f\n", s.D);
+#endif DEBUGGER
+
+
+
+        //Azamat: The projection on Z should be of sum of constraint forces and parent forces
+        //q_dotdot(j) = (torques(j))/s.D;
+        //Azamat: s.u is generalized forces in the joint coord. without constraints.
+        //Azamat: s.u=torques(j)-dot(s.Z,s.R+s.PC);
+        //printf("Total forces in joint space %f\n", (s.u-dot(s.Z,parent_force+torques(j)))); // Azamat: Have to put constraint forces in Wrench form and then add,
+        //equation h) acc[i] = Fi*(acc[i-1] + Z[i]*qdotdot[i] + c[i]                        //Azamat: here torques variable represents constraint forces, check lines above
+        //std::cout<<"Z"<<i<<": "<<s.Z<<std::endl;
+        //std::cout<<"C"<<i<<": "<<s.C<<std::endl;
+
+        s.acc = s.F.Inverse(a_p + s.Z * q_dotdot(j) + s.C);//Azamat: returns acceleration in link distal tip coordinates. For use needs to be transformed
+        
+#ifdef DEBUGGER
+        std::cout << "a_p = " << a_p << std::endl;
+        std::cout << "s_C = " << s.C << std::endl;
+        std::cout << "s.Z*q_dotdot(j) =" << s.Z * q_dotdot(j) << std::endl;
+        std::cout << "acceleration_local: " << s.acc << std::endl;
+#endif DEBUGGER
+
+        //q_dotdot(j) = (s.u+constraint_torque)/s.D;
+
+
+        if (chain.getSegment(i - 1).getJoint().getType() != Joint::None)
+            j++;
+    }
+    //std::cout<<"endpoint acceleration: "<<F_total.M*results[ns].acc<<std::endl;
+    //std::cout<<"endpoint position: "<<F_total<<std::endl;
+}
 
 void ChainIdSolver_Vereshchagin::getLinkCartesianPose(Frames& x_base)
 {
@@ -393,7 +488,7 @@ void ChainIdSolver_Vereshchagin::getLinkVelocity(Twists& xDot_local)
 
 void ChainIdSolver_Vereshchagin::getLinkAcceleration(Twists& xDotdot_local)
 {
-    for (int i = 0; i < ns; i++)
+     for (int i = 0; i < ns; i++)
     {
         xDotdot_local[i] = results[i + 1].acc;
     }
@@ -401,7 +496,6 @@ void ChainIdSolver_Vereshchagin::getLinkAcceleration(Twists& xDotdot_local)
 
 }
 
-/*
 void ChainIdSolver_Vereshchagin::getJointBiasAcceleration(JntArray& bias_q_dotdot)
 {
     for (int i = 0; i < ns; i++)
@@ -487,6 +581,22 @@ void ChainIdSolver_Vereshchagin::getLinkBiasForceMatrix(Wrenches& R_tilde)
     return;
 }
 
-*/
+//this method should retur array of M's
+
+void ChainIdSolver_Vereshchagin::getLinkUnitForceAccelerationEnergy(Eigen::MatrixXd& M)
+{
+
+
+}
+
+//this method should retur array of E_tilde's
+
+void ChainIdSolver_Vereshchagin::getLinkUnitForceMatrix(Matrix6Xd& E_tilde)
+{
+
+
+}
+
+
 
 }//namespace
