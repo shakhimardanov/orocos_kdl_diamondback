@@ -61,7 +61,7 @@ namespace KDL {
          * \param q_dotdot The joint accelerations
          * \param torques the resulting torques for the joints
          */
-        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques);
+        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques, JntArray &controltorques);
         //Returns cartesian positions of links in base coordinates
         void getLinkCartesianPose(Frames& x_base);
         //Returns cartesian velocities of links in base coordinates
@@ -93,7 +93,7 @@ namespace KDL {
         void initial_upwards_sweep(const JntArray &q, const JntArray &q_dot, const JntArray &q_dotdot, const Wrenches& f_ext);
         void downwards_sweep(const Jacobian& alfa, const JntArray& torques);
         void constraint_calculation(const JntArray& beta);
-        void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques);
+        void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques);
 
     private:
         Chain chain;
@@ -133,6 +133,7 @@ namespace KDL {
             double D; //vector D[i] = S[i]^T*U[i]
             Matrix6Xd E; //matrix with virtual unit constraint force due to acceleration constraints
             Matrix6Xd E_tilde;
+            Eigen::VectorXd bethaPosture;
             Eigen::MatrixXd M; //acceleration energy already generated at link i
             Eigen::VectorXd G; //magnitude of the constraint forces already generated at link i
             Eigen::VectorXd EZ; //K[i] = Etiltde'*Z

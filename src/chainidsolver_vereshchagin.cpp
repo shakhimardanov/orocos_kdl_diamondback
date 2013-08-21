@@ -43,7 +43,7 @@ results(ns + 1, segment_info(nc))
     tmpm = VectorXd::Ones(nc);
 }
 
-int ChainIdSolver_Vereshchagin::CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques)
+int ChainIdSolver_Vereshchagin::CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques, JntArray &controltorques)
 {
     //Check sizes always
     if (q.rows() != nj || q_dot.rows() != nj || q_dotdot.rows() != nj || torques.rows() != nj || f_ext.size() != ns)
@@ -57,7 +57,7 @@ int ChainIdSolver_Vereshchagin::CartToJnt(const JntArray &q, const JntArray &q_d
     //Solve for the constraint forces
     this->constraint_calculation(beta);
     //do an upward recursion to propagate the result
-    this->final_upwards_sweep(q_dotdot, torques);
+    this->final_upwards_sweep(q_dotdot, torques, controltorques);
     return 0;
 }
 
@@ -330,27 +330,29 @@ void ChainIdSolver_Vereshchagin::constraint_calculation(const JntArray& beta)
     acc << Vector3d::Map(acc_root.rot.data), Vector3d::Map(acc_root.vel.data);
     nu_sum = -(results[0].E_tilde.transpose() * acc).lazy();
 
-    //std::cout<<"E~0: "<<results[0].E_tilde.transpose()<<std::endl;
+    // std::cout<<"E4: "<<results[4].E_tilde.transpose()<<std::endl;
     // std::cout<<"E~0*acc0: "<<acc<<std::endl;
     //std::cout<<"E~0*acc0: "<<nu_sum<<std::endl;
 
     //nu_sum.setZero();
     nu_sum += beta.data;
-    nu_sum -= results[0].G;
-    //std::cout<<"G0: "<<results[0].G<<std::endl;
+    // std::cout << "nu_sum without bethaPosture "<< nu_sum << std::endl;
+    if (results[4].bethaPosture.size() != 0)
+        nu_sum += 0.2*results[4].bethaPosture;
+    // std::cout << "bethaPosture "<< results[4].bethaPosture << std::endl;
+    // std::cout << "nu_sum with bethaPosture "<< nu_sum << std::endl;
 
+    nu_sum -= results[0].G;
     //equation f) nu = M_0_inverse*(beta_N - E0_tilde`*acc0 - G0)
     nu = (M_0_inverse * nu_sum).lazy();
-
-    //      std::cout<<"nu: "<<nu<<std::endl;
-    /*
-    std::cout<<"nu: "<<nu<<std::endl;
-    std::cout<<"beta: "<<beta.data<<std::endl;
-    std::cout<<"G: "<<results[0].G<<std::endl;
-     */
+    // printf("%f\n", results[4].bethaPosture[0]);
+    // std::cout<<"nu: "<<nu<<std::endl;
+    // std::cout<<"G: "<<results[4].G<<std::endl;
+    // std::cout<<"beta: "<<beta.data<<std::endl;
+   
 }
 
-void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques)
+void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques)
 {
     unsigned int j = 0;
 
@@ -362,6 +364,7 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
         // = D^-1(u - Z'(P*acc[i-1] + E*nu)
         Twist a_g;
         Twist a_p;
+        Vector6d acc;
         if (i == 1)
         {
             a_p = acc_root;
@@ -376,15 +379,23 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
         //std::cout<<"E"<<i<<": "<<s.E<<std::endl;
         Wrench constraint_force = Wrench(Vector(tmp(3), tmp(4), tmp(5)),
                                          Vector(tmp(0), tmp(1), tmp(2)));
-        /*
-        if(i==ns){
+        
+        if(i==ns)
+        {
+
+            acc << Vector3d::Map(a_p.rot.data), Vector3d::Map(a_p.vel.data);
+            s.bethaPosture = (results[i].E_tilde.transpose() * acc).lazy();
+            // printf("%f\n", s.bethaPosture[0]);
+            // s.bethaPosture = (results[i].E.transpose() * acc).lazy();        
+            // std::cout << "bethaPosture "<< i << "   " << s.bethaPosture << std::endl;
             //std::cout<<"nu: "<<nu<<std::endl;
             //std::cout<<"E~: "<<s.E_tilde<<std::endl;
-            std::cout<<"constraint_force: "<<F_total.M*s.F.Inverse(constraint_force)<<std::endl;
-            std::cout<<"parent force: "<<F_total.M*s.F.Inverse(s.P*a_p)<<std::endl;
+            // std::cout<<"constraint_force: "<<F_total.M*s.F.Inverse(constraint_force)<<std::endl;
+            // std::cout<<"parent force: "<<F_total.M*s.F.Inverse(s.P*a_p)<<std::endl;
         }
-         */
+         
 
+        
         //Azamat: acceleration components are also computed
         //Contribution of the acceleration of the parent (i-1)
         Wrench parent_force = s.P*a_p;
@@ -398,15 +409,16 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
         torques(j) = constraint_torque;
         //s.constAccComp = torques(j) / s.D;
         s.constAccComp = constraint_torque / s.D;
-        s.nullspaceAccComp = s.u / s.D;
+        s.nullspaceAccComp = (s.u + controltorques(j))/ s.D;
 
         q_dotdot(j) = (s.nullspaceAccComp + parentAccComp + s.constAccComp);
+        s.acc = s.F.Inverse(a_p + s.Z * q_dotdot(j) + s.C);//Azamat: returns acceleration in link distal tip coordinates. For use needs to be transformed
+        
 
 #ifdef DEBUGGER
         // printf("Torque contributions U - %f,  biasForces - %f, constraintTorque - %f,  parentForces - %f\n", s.u,  s.totalBias, constraint_torque,  parent_forceProjection);
         // printf("Articulated body inertia D - %f\n", s.D);
 #endif DEBUGGER
-
 
 
         //Azamat: The projection on Z should be of sum of constraint forces and parent forces
@@ -417,9 +429,6 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
         //equation h) acc[i] = Fi*(acc[i-1] + Z[i]*qdotdot[i] + c[i]                        //Azamat: here torques variable represents constraint forces, check lines above
         //std::cout<<"Z"<<i<<": "<<s.Z<<std::endl;
         //std::cout<<"C"<<i<<": "<<s.C<<std::endl;
-
-        s.acc = s.F.Inverse(a_p + s.Z * q_dotdot(j) + s.C);//Azamat: returns acceleration in link distal tip coordinates. For use needs to be transformed
-        
 #ifdef DEBUGGER
         std::cout << "a_p = " << a_p << std::endl;
         std::cout << "s_C = " << s.C << std::endl;
