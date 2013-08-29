@@ -134,6 +134,7 @@ namespace KDL {
             Matrix6Xd E; //matrix with virtual unit constraint force due to acceleration constraints
             Matrix6Xd E_tilde;
             Eigen::VectorXd bethaPosture;
+            Eigen::VectorXd bethaConstraint;
             Eigen::MatrixXd M; //acceleration energy already generated at link i
             Eigen::VectorXd G; //magnitude of the constraint forces already generated at link i
             Eigen::VectorXd EZ; //K[i] = Etiltde'*Z
