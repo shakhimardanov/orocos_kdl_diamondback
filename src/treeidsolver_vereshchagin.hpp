@@ -24,7 +24,7 @@
 
 #include "treeidsolver.hpp"
 #include "treeiksolver.hpp"
-#include <treefksolverpos_recursive.hpp>
+#include "treefksolverpos_recursive.hpp"
 #include "frames.hpp"
 #include "articulatedbodyinertia.hpp"
 #include "segment.hpp"

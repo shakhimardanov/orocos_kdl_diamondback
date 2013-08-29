@@ -38,7 +38,8 @@ namespace KDL {
     typedef Eigen::Matrix<double, 6, 6 > Matrix6d;
     typedef Eigen::Matrix<double, 6, Eigen::Dynamic> Matrix6Xd;
 
-    class ChainIdSolver_Vereshchagin {
+    class ChainIdSolver_Vereshchagin 
+    {
     public:
         /**
          * Constructor for the solver, it will allocate all the necessary memory
@@ -48,7 +49,8 @@ namespace KDL {
          */
         ChainIdSolver_Vereshchagin(const Chain& chain, Twist root_acc, unsigned int nc);
 
-        ~ChainIdSolver_Vereshchagin() {
+        ~ChainIdSolver_Vereshchagin() 
+        {
         };
 
         /**
@@ -94,6 +96,9 @@ namespace KDL {
         void downwards_sweep(const Jacobian& alfa, const JntArray& torques);
         void constraint_calculation(const JntArray& beta);
         void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques);
+        // need this for weighing based multitasking
+        void constraint_update(const JntArray& betaControl);
+        void final_sweep_update(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques);
 
     private:
         Chain chain;
@@ -114,7 +119,8 @@ namespace KDL {
         Wrench qdotdot_sum;
         Frame F_total;
 
-        struct segment_info {
+        struct segment_info 
+        {
             Frame F; //local pose with respect to previous link in segments coordinates
             Frame F_base; // pose of a segment in root coordinates
             Twist Z; //Unit twist
@@ -147,7 +153,8 @@ namespace KDL {
             double totalBias; //Azamat: R+PC (centrepital+coriolis) in joint subspace
             double u; //vector u[i] = torques(i) - S[i]^T*(p_A[i] + I_A[i]*C[i]) in joint subspace. Azamat: In code u[i] = torques(i) - s[i].totalBias
 
-            segment_info(unsigned int nc) {
+            segment_info(unsigned int nc) 
+            {
                 E.resize(6, nc);
                 E_tilde.resize(6, nc);
                 G.resize(nc);

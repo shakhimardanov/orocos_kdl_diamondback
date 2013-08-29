@@ -60,9 +60,9 @@ int ChainIdSolver_Vereshchagin::CartToJnt(const JntArray &q, const JntArray &q_d
     this->final_upwards_sweep(q_dotdot, torques, controltorques);
     //we need these two calls if we want to use weighted multi-tasking
     //use decoupled and updated beta to update constraint force magnitudes
-    this->constraint_calculation(beta);
+    this->constraint_update(beta);
     //use updated constraint forces to update  accelerations
-    this->final_upwards_sweep(q_dotdot, torques, controltorques);
+    this->final_sweep_update(q_dotdot, torques, controltorques);
 
     return 0;
 }
@@ -275,34 +275,6 @@ void ChainIdSolver_Vereshchagin::downwards_sweep(const Jacobian& alfa, const Jnt
                 j--;
         }
 
-        /*
-        std::cout<<"E~ "<<i<<": "<<s.E_tilde<<std::endl;
-        std::cout<<"R~ "<<i<<": "<<s.R_tilde<<std::endl;
-        std::cout<<"M  "<<i<<": "<<s.M<<std::endl;
-        std::cout<<"G  "<<i<<": "<<s.G<<std::endl;
-         *
-        std::cout<<"E"<<i<<": "<<s.E<<std::endl;
-        std::cout<<"Z: "<<s.Z<<std::endl;
-        std::cout<<"D: "<<s.D<<std::endl;
-        std::cout<<"PZ: "<<s.PZ<<std::endl;
-        std::cout<<"E'Z: "<<s.EZ<<std::endl;
-        std::cout<<"G: "<<s.G<<std::endl;
-        std::cout<<"M: "<<s.M<<std::endl;
-         */
-        /*
-        std::cout<<"For segment "<<i<<std::endl;
-        std::cout<<"D: "<<s.D<<std::endl;
-        std::cout<<"E~: "<<s.E_tilde<<std::endl;
-        std::cout<<"E: "<<s.E<<std::endl;
-
-        std::cout<<"E: "<<s.E<<std::endl;
-        std::cout<<"Z: "<<s.Z.rot<<s.Z.vel<<std::endl;
-        Matrix6d tmp;
-        tmp<<s.P_tilde.I,s.P_tilde.H,s.P_tilde.H.transpose(),s.P_tilde.M;
-        std::cout<<"P~: \n"<<tmp<<std::endl;
-        tmp<<s.P.I,s.P.H,s.P.H.transpose(),s.P.M;
-        std::cout<<"P: \n"<<tmp<<std::endl;
-         */
     }
 }
 
@@ -465,6 +437,20 @@ void ChainIdSolver_Vereshchagin::final_upwards_sweep(JntArray &q_dotdot, JntArra
     }
 
 }
+
+void ChainIdSolver_Vereshchagin::constraint_update(const JntArray& betaControl)
+{
+
+
+}
+
+
+void ChainIdSolver_Vereshchagin::final_sweep_update(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques)
+{
+
+    
+}
+
 
 void ChainIdSolver_Vereshchagin::getLinkCartesianPose(Frames& x_base)
 {
