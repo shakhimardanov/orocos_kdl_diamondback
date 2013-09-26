@@ -22,6 +22,8 @@
 #ifndef KDL_CHAINIDSOLVER_VERESHCHAGIN_HPP
 #define KDL_CHAINIDSOLVER_VERESHCHAGIN_HPP
 
+// #define DEBUGGER
+
 #include "chainidsolver.hpp"
 #include "frames.hpp"
 #include "articulatedbodyinertia.hpp"
@@ -63,7 +65,7 @@ namespace KDL {
          * \param q_dotdot The joint accelerations
          * \param torques the resulting torques for the joints
          */
-        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const Wrenches& f_ext, JntArray &torques, JntArray &controltorques);
+        int CartToJnt(const JntArray &q, const JntArray &q_dot, JntArray &q_dotdot, const Jacobian& alfa, const JntArray& beta, const JntArray& betaControl, const Wrenches& f_ext, JntArray &torques, JntArray &controltorques);
         //Returns cartesian positions of links in base coordinates
         void getLinkCartesianPose(Frames& x_base);
         //Returns cartesian velocities of links in base coordinates
@@ -98,7 +100,7 @@ namespace KDL {
         void final_upwards_sweep(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques);
         // need this for weighing based multitasking
         void constraint_update(const JntArray& betaControl);
-        void final_sweep_update(JntArray &q_dotdot, JntArray &torques, JntArray &controltorques);
+        void final_sweep_update(JntArray &q_dotdot, JntArray &torques);
 
     private:
         Chain chain;
